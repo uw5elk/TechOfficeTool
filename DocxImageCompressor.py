@@ -451,6 +451,7 @@ class App(tk.Tk):
                 self.after(0, lambda: self._done("\n".join(lines))); return
             total = len(planned); self.after(0, lambda: self.progress.configure(maximum=total))
             ok, err, mapping, used, n = 0, 0, [], {}, self.start_num_var.get()
+            errors_text = []
             for i, src in enumerate([s for s, _ in planned], 1):
                 base = _format_name(tmpl, n, src); ext = src.suffix; dst = src.parent / f"{base}{ext}"
                 k = 1
@@ -462,7 +463,7 @@ class App(tk.Tk):
                     if src.resolve() != dst.resolve():
                         src.rename(dst); mapping.append({"old": str(src), "new": str(dst)})
                     ok += 1
-                except Exception: err += 1
+                except Exception as e: err += 1; errors_text.append(f"{src.name}: {e}")
                 n += self.step_var.get()
             if mapping:
                 try:
@@ -470,6 +471,7 @@ class App(tk.Tk):
                 except Exception: pass
             msg = f"Перейменовано: {ok}\nПомилок: {err}"
             if mapping: msg += "\nЛог збережено (.rename_log_*.json)"
+            if errors_text: msg += "\n\nДеталі помилок:\n" + "\n".join(errors_text[:3])
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[4]:
             rec = self.recursive_var.get(); keep_icc = self.keep_icc_var.get(); paranoid = self.paranoid_var.get(); backup = self.backup_var.get()
