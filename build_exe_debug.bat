@@ -8,7 +8,7 @@ if errorlevel 1 (
     exit /b 1
 )
 python -m pip install pyinstaller
-python -m PyInstaller --noconfirm --clean --onefile --console --name "WordCompressor_debug" ^
+python -m PyInstaller --noconfirm --clean --onefile --console --name "TechOfficeTool_debug" --icon="icon.ico" ^
     --hidden-import win32api ^
     --hidden-import pywintypes ^
     --hidden-import pythoncom ^
