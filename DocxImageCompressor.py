@@ -289,7 +289,7 @@ class App(tk.Tk):
         
         self.lbl_convert_hint = ttk.Label(frm, text="Потрібен Microsoft Word для конвертації.", foreground="#aaaaaa")
         self.lbl_convert_hint.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
-        self.status = ttk.Label(frm, text="Оберіть режим і натисніть «Старт»", foreground="#333")
+        self.status = ttk.Label(frm, text="Оберіть режим і натисніть «Старт»", foreground="#aaaaaa")
         self.status.grid(row=10, column=0, columnspan=3, sticky="w", **pad)
         self.progress = ttk.Progressbar(frm, mode="determinate", length=400)
         self.progress.grid(row=11, column=0, columnspan=3, sticky="ew", **pad)
@@ -412,7 +412,6 @@ class App(tk.Tk):
             dry = self.dry_run_var.get(); rec = self.recursive_var.get()
             self.after(0, lambda: self.status.configure(text="Аналіз..."))
             
-            # Оновлена логіка перейменування (без зламаних функцій)
             files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
             if not files:
                 self.after(0, lambda: self._done("У вибраній папці не знайдено зображень.")); return
@@ -442,7 +441,7 @@ class App(tk.Tk):
                 self.after(0, lambda: self._done("\n".join(lines))); return
 
             total = len(planned); self.after(0, lambda: self.progress.configure(maximum=total))
-            ok, err, mapping = 0, 0, []
+            ok, err = 0, 0
             errors_text = []
             
             for i, (src, dst) in enumerate(planned, 1):
@@ -453,11 +452,10 @@ class App(tk.Tk):
                         for attempt in range(5):
                             try:
                                 os.rename(str(src), str(dst))
-                                mapping.append({"old": str(src), "new": str(dst)})
                                 success = True
                                 break
                             except FileNotFoundError:
-                                time.sleep(0.5) # Даємо Windows більше часу (0.5с)
+                                time.sleep(0.5)
                             except Exception:
                                 time.sleep(0.5)
                         
@@ -472,8 +470,6 @@ class App(tk.Tk):
                     err += 1
                     errors_text.append(f"{src.name}: {e}")
             
-            # Логування вимкнено за запитом користувача
-            pass
             msg = f"Перейменовано: {ok}\nПомилок: {err}"
             if errors_text: msg += "\n\nДеталі помилок:\n" + "\n".join(errors_text[:3])
             self.after(0, lambda: self._done(msg))
