@@ -65,7 +65,7 @@ def process_one_image(src: Path, dst: Path, max_side: int, quality: int, png2jpg
     try:
         res["old"] = src.stat().st_size
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if src.absolute() != dst.absolute(): shutil.copy2(src, dst)
+        if str(src) != str(dst): shutil.copy2(src, dst)
         compress_image_file(dst, max_side, quality, png2jpg, keep_exif)
         res["new"] = dst.stat().st_size
         res["ok"] = True
@@ -106,7 +106,7 @@ def batch_rename_photos(root: Path, recursive: bool, template: str, start: int, 
         ext = src.suffix
         candidate = src.parent / f"{base}{ext}"
         k = 1
-        while (candidate.exists() and candidate.resolve() != src.absolute()) or str(candidate).lower() in used:
+        while (candidate.exists() and str(candidate) != str(src)) or str(candidate).lower() in used:
             candidate = src.parent / f"{base}_{k}{ext}"
             k += 1
         used[str(candidate).lower()] = True
@@ -115,7 +115,7 @@ def batch_rename_photos(root: Path, recursive: bool, template: str, start: int, 
     if dry_run: return result
     log_data = {"time": datetime.now().isoformat(), "mapping": []}
     for src, dst in result["planned"]:
-        if src.absolute() == dst.absolute(): continue
+        if str(src) == str(dst): continue
         try:
             src.rename(dst)
             log_data["mapping"].append({"old": str(src), "new": str(dst)})
@@ -159,7 +159,7 @@ def process_one_docx(src: Path, dst: Path, max_side: int, quality: int, png2jpg:
     temp_out = None
     try:
         result["old"] = src.stat().st_size
-        same = src.absolute() == dst.absolute()
+        same = str(src) == str(dst)
         write_path = temp_out = dst.with_suffix(".tmp_c.docx") if same else dst
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -182,7 +182,7 @@ def process_one_docx(src: Path, dst: Path, max_side: int, quality: int, png2jpg:
         if temp_out and temp_out.exists():
             try: temp_out.unlink()
             except Exception: pass
-        if src.absolute() != dst.absolute():
+        if str(src) != str(dst):
             try:
                 shutil.copy2(src, dst)
                 result["new"] = dst.stat().st_size
@@ -198,7 +198,7 @@ def convert_doc_to_docx(src: Path, dst: Path) -> dict:
         word = win32com.client.DispatchEx("Word.Application")
         word.Visible = False
         word.DisplayAlerts = 0
-        doc = word.Documents.Open(FileName=str(src.absolute()), ConfirmConversions=False, ReadOnly=False, AddToRecentFiles=False, NoEncodingDialog=True)
+        doc = word.Documents.Open(FileName=str(src), ConfirmConversions=False, ReadOnly=False, AddToRecentFiles=False, NoEncodingDialog=True)
         out_file = dst.with_suffix(".docx")
         out_file.parent.mkdir(parents=True, exist_ok=True)
         doc.SaveAs(FileName=str(out_file.resolve()), FileFormat=16)
@@ -455,12 +455,12 @@ class App(tk.Tk):
             for i, src in enumerate([s for s, _ in planned], 1):
                 base = _format_name(tmpl, n, src); ext = src.suffix; dst = src.parent / f"{base}{ext}"
                 k = 1
-                while (dst.exists() and dst.absolute() != src.absolute()) or str(dst).lower() in used:
+                while (dst.exists() and str(dst) != str(src)) or str(dst).lower() in used:
                     dst = src.parent / f"{base}_{k}{ext}"; k += 1
                 used[str(dst).lower()] = True
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 try:
-                    if src.absolute() != dst.absolute():
+                    if str(src) != str(dst):
                         src.rename(dst); mapping.append({"old": str(src), "new": str(dst)})
                     ok += 1
                 except Exception as e: err += 1; errors_text.append(f"{src.name}: {e}")
