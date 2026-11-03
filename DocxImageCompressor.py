@@ -1,6 +1,5 @@
-import time
 #!/usr/bin/env python3
-import os, sys, json, shutil, zipfile, tempfile, threading, traceback
+import os, sys, json, shutil, zipfile, tempfile, threading, traceback, time
 from datetime import datetime
 from pathlib import Path
 try:
@@ -72,6 +71,7 @@ def process_one_image(src: Path, dst: Path, max_side: int, quality: int, png2jpg
         res["ok"] = True
     except Exception: pass
     return res
+
 def _get_date_for_sort(p: Path, mode: str):
     if mode.startswith("За датою EXIF"):
         try:
@@ -95,43 +95,6 @@ def _format_name(template: str, n: int, src: Path) -> str:
     try:
         return template.format(n=n, name=src.stem, parent=src.parent.name, date=_get_exif_date_str(src), ext=src.suffix.lstrip("."))
     except Exception: return f"{src.stem}_{n}"
-
-def batch_rename_photos(root: Path, recursive: bool, template: str, start: int, step: int, sort_mode: str, dry_run: bool) -> dict:
-    result = {"planned": [], "count": 0}
-    files = [f for f in (root.rglob("*") if recursive else root.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
-    if sort_mode == "За іменем": files.sort(key=lambda p: p.name.lower())
-    elif sort_mode.startswith("За датою"): files.sort(key=lambda p: _get_date_for_sort(p, sort_mode))
-    used, n, mapping = {}, start, {}
-    for src in files:
-        base = _format_name(template, n, src)
-        ext = src.suffix
-        candidate = src.parent / f"{base}{ext}"
-        k = 1
-        while (candidate.exists() and str(candidate) != str(src)) or str(candidate).lower() in used:
-            candidate = src.parent / f"{base}_{k}{ext}"
-            k += 1
-        used[str(candidate).lower()] = True
-        result["planned"].append((src, candidate))
-        n += step
-    if dry_run: return result
-    log_data = {"time": datetime.now().isoformat(), "mapping": []}
-    for src, dst in result["planned"]:
-        if str(src) == str(dst): continue
-        try:
-            try:
-                            src.rename(dst)
-                        except FileNotFoundError:
-                            time.sleep(0.3)
-                            src.rename(dst)
-            log_data["mapping"].append({"old": str(src), "new": str(dst)})
-            result["count"] += 1
-        except Exception: pass
-    if log_data["mapping"]:
-        try:
-            with open(root / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json", "w", encoding="utf-8") as f:
-                json.dump(log_data, f, ensure_ascii=False, indent=2)
-        except Exception: pass
-    return result
 
 def strip_exif_one(p: Path, keep_icc: bool, paranoid: bool, backup: bool) -> str:
     try:
@@ -233,12 +196,12 @@ def convert_doc_to_docx(src: Path, dst: Path) -> dict:
 
 def find_files_for_convert(root: Path) -> list:
     return [f for f in root.rglob("*") if f.is_file() and not f.name.startswith("~$") and (f.suffix.lower() == ".doc" or (f.suffix.lower() == ".docx" and not is_valid_docx(f)))]
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("TechOfficeTool | UW5ELK")
-        self.geometry("800x550")
-        self.minsize(680, 620)
+        self.minsize(680, 400)
         self.configure(bg="#2d2d2d")
         style = ttk.Style(self)
         style.theme_use("clam")
@@ -251,6 +214,7 @@ class App(tk.Tk):
         style.configure("TCombobox", fieldbackground="white", foreground="black", background="white", arrowcolor="black")
         style.map("TCombobox", fieldbackground=[("readonly", "white")], foreground=[("readonly", "black")], selectbackground=[("readonly", "white")], selectforeground=[("readonly", "black")])
         style.configure("TSpinbox", fieldbackground="white", foreground="black", arrowcolor="black", background="white")
+        
         self.mode_var = tk.StringVar(value=MODES[0])
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -447,58 +411,71 @@ class App(tk.Tk):
             tmpl = self.template_var.get().strip() or "IMG_{n:04d}"
             dry = self.dry_run_var.get(); rec = self.recursive_var.get()
             self.after(0, lambda: self.status.configure(text="Аналіз..."))
-            res = batch_rename_photos(input_path, rec, tmpl, self.start_num_var.get(), self.step_var.get(), self.sort_var.get(), dry)
-            planned = res["planned"]
+            
+            # Оновлена логіка перейменування (без зламаних функцій)
+            files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
+            if not files:
+                self.after(0, lambda: self._done("У вибраній папці не знайдено зображень.")); return
+            
+            if self.sort_var.get() == "За іменем": files.sort(key=lambda p: p.name.lower())
+            elif self.sort_var.get().startswith("За датою"): files.sort(key=lambda p: _get_date_for_sort(p, self.sort_var.get()))
+            
+            used = {}
+            n = self.start_num_var.get()
+            planned = []
+            for src in files:
+                base = _format_name(tmpl, n, src)
+                ext = src.suffix
+                candidate = src.parent / f"{base}{ext}"
+                k = 1
+                while (candidate.exists() and str(candidate) != str(src)) or str(candidate).lower() in used:
+                    candidate = src.parent / f"{base}_{k}{ext}"
+                    k += 1
+                used[str(candidate).lower()] = True
+                planned.append((src, candidate))
+                n += self.step_var.get()
+                
             if dry:
                 lines = [f"Знайдено: {len(planned)}", "План (перші 50):"]
                 for s, d in planned[:50]: lines.append(f"{s.name} → {d.name}")
                 if len(planned) > 50: lines.append(f"... ще {len(planned)-50}")
                 self.after(0, lambda: self._done("\n".join(lines))); return
+
             total = len(planned); self.after(0, lambda: self.progress.configure(maximum=total))
-            ok, err, mapping, used, n = 0, 0, [], {}, self.start_num_var.get()
+            ok, err, mapping = 0, 0, []
             errors_text = []
-            for i, src in enumerate([s for s, _ in planned], 1):
-                base = _format_name(tmpl, n, src)
-                ext = src.suffix
-                dst = src.parent / f"{base}{ext}"
-                k = 1
-                while (dst.exists() and str(dst) != str(src)) or str(dst).lower() in used:
-                    dst = src.parent / f"{base}_{k}{ext}"
-                    k += 1
-                used[str(dst).lower()] = True
-                name = src.name[:50]
-                self.after(0, lambda i=i, t=total, n=name: self._upd(i, t, n))
-                
+            
+            for i, (src, dst) in enumerate(planned, 1):
+                self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 try:
                     if str(src) != str(dst):
                         success = False
                         for attempt in range(5):
                             try:
-                                if src.exists():
-                                    src.rename(dst)
-                                    mapping.append({"old": str(src), "new": str(dst)})
-                                    success = True
-                                    break
+                                os.rename(str(src), str(dst))
+                                mapping.append({"old": str(src), "new": str(dst)})
+                                success = True
+                                break
                             except FileNotFoundError:
-                                time.sleep(0.3)
+                                time.sleep(0.5) # Даємо Windows більше часу (0.5с)
                             except Exception:
-                                time.sleep(0.3)
+                                time.sleep(0.5)
                         
                         if success:
                             ok += 1
                         else:
                             err += 1
-                            errors_text.append(f"{src.name}: Файл заблоковано")
+                            errors_text.append(f"{src.name}: Файл заблоковано системою")
                     else:
                         ok += 1
                 except Exception as e:
                     err += 1
                     errors_text.append(f"{src.name}: {e}")
-                
-                n += self.step_var.get()
+            
             if mapping:
                 try:
-                    with open(input_path / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json", "w", encoding="utf-8") as f: json.dump({"time": datetime.now().isoformat(), "mapping": mapping}, f, ensure_ascii=False, indent=2)
+                    with open(input_path / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json", "w", encoding="utf-8") as f: 
+                        json.dump({"time": datetime.now().isoformat(), "mapping": mapping}, f, ensure_ascii=False, indent=2)
                 except Exception: pass
             msg = f"Перейменовано: {ok}\nПомилок: {err}"
             if mapping: msg += "\nЛог збережено (.rename_log_*.json)"
