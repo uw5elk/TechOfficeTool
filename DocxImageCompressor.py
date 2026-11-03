@@ -234,6 +234,14 @@ class App(tk.Tk):
         self.title("Word / Images Tool | UW5ELK")
         self.geometry("800x720")
         self.minsize(680, 620)
+        self.configure(bg="#2d2d2d")
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure(".", background="#2d2d2d", foreground="white", fieldbackground="#3c3c3c", bordercolor="#555555")
+        style.map("TCombobox", fieldbackground=[("readonly", "#3c3c3c")], foreground=[("readonly", "white")])
+        style.configure("TButton", background="#444444", foreground="white")
+        style.configure("TLabel", background="#2d2d2d", foreground="white")
+        style.configure("TCheckbutton", background="#2d2d2d", foreground="white")
         self.mode_var = tk.StringVar(value=MODES[0])
         self.input_var = tk.StringVar()
         self.output_var = tk.StringVar()
@@ -255,7 +263,7 @@ class App(tk.Tk):
 
     def _build_ui(self):
         pad = {"padx": 12, "pady": 6}
-        frm = ttk.Frame(self, padding=14)
+        frm = ttk.Frame(self, padding=20)
         frm.pack(fill=tk.BOTH, expand=True)
         ttk.Label(frm, text="Режим роботи:", font=("", 10, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", **pad)
         self.mode_cb = ttk.Combobox(frm, textvariable=self.mode_var, values=list(MODES), state="readonly", width=52)
@@ -337,6 +345,8 @@ class App(tk.Tk):
             self.ren_opts.grid(); self.lbl_in.configure(text="Папка фото:"); self._show_output(False)
         elif mode == MODES[4]:
             self.exif_opts.grid(); self.lbl_in.configure(text="Папка зображень:"); self._show_output(False)
+        self.update_idletasks()
+        self.geometry("")
         self._toggle_output()
 
     def _show_output(self, show):
