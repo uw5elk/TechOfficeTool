@@ -286,7 +286,7 @@ class App(tk.Tk):
         self.exif_opts = ttk.Frame(frm)
         self.exif_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
         ttk.Checkbutton(self.exif_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
-        ttk.Checkbutton(self.exif_opts, text="Зберігати ICC-профіль", variable=self.keep_icc_var).pack(anchor="w")
+        ttk.Checkbutton(self.exif_opts, text="Зберігати кольори", variable=self.keep_icc_var).pack(anchor="w")
         ttk.Checkbutton(self.exif_opts, text="Повна переупаковка (максимальна очистка)", variable=self.paranoid_var).pack(anchor="w")
         ttk.Checkbutton(self.exif_opts, text="Створювати резервну копію", variable=self.backup_var).pack(anchor="w")
         
