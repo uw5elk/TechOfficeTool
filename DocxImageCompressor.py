@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, shutil, zipfile, tempfile, threading, traceback, time
+import os, sys, shutil, zipfile, tempfile, threading, time, traceback
 from datetime import datetime
 from pathlib import Path
 try:
@@ -385,7 +385,7 @@ class App(tk.Tk):
             total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
             ok, fail = 0, 0
             for i, src in enumerate(files, 1):
-                dst = output_path / (src.relative_to(input_path) if src.is_relative_to(input_path) else src.name)
+                dst = output_path / (src.relative_to(input_path) if str(src).startswith(str(input_path)) else src.name)
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 res = convert_doc_to_docx(src, dst)
                 if res["ok"]: ok += 1
