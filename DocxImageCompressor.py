@@ -280,19 +280,19 @@ class App(tk.Tk):
         
         self.img_opts = ttk.Frame(frm)
         self.img_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Checkbutton(self.img_opts, text="Рекурсивно", variable=self.recursive_var).pack(anchor="w")
+        ttk.Checkbutton(self.img_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
         ttk.Checkbutton(self.img_opts, text="Зберігати EXIF", variable=self.keep_exif_var).pack(anchor="w")
         
         self.exif_opts = ttk.Frame(frm)
         self.exif_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Checkbutton(self.exif_opts, text="Рекурсивно", variable=self.recursive_var).pack(anchor="w")
+        ttk.Checkbutton(self.exif_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
         ttk.Checkbutton(self.exif_opts, text="Зберігати ICC-профіль", variable=self.keep_icc_var).pack(anchor="w")
         ttk.Checkbutton(self.exif_opts, text="Параноїдальний режим", variable=self.paranoid_var).pack(anchor="w")
         ttk.Checkbutton(self.exif_opts, text="Робити .bak-копію", variable=self.backup_var).pack(anchor="w")
         
         self.ren_opts = ttk.Frame(frm)
         self.ren_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
-        ttk.Checkbutton(self.ren_opts, text="Рекурсивно", variable=self.recursive_var).pack(anchor="w")
+        ttk.Checkbutton(self.ren_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
         row = ttk.Frame(self.ren_opts); row.pack(anchor="w", pady=4)
         ttk.Label(row, text="Шаблон:").pack(side=tk.LEFT)
         ttk.Entry(row, textvariable=self.template_var, width=30).pack(side=tk.LEFT, padx=6)
