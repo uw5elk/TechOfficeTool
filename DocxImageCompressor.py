@@ -472,13 +472,9 @@ class App(tk.Tk):
                     err += 1
                     errors_text.append(f"{src.name}: {e}")
             
-            if mapping:
-                try:
-                    with open(input_path / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json", "w", encoding="utf-8") as f: 
-                        json.dump({"time": datetime.now().isoformat(), "mapping": mapping}, f, ensure_ascii=False, indent=2)
-                except Exception: pass
+            # Логування вимкнено за запитом користувача
+            pass
             msg = f"Перейменовано: {ok}\nПомилок: {err}"
-            if mapping: msg += "\nЛог збережено (.rename_log_*.json)"
             if errors_text: msg += "\n\nДеталі помилок:\n" + "\n".join(errors_text[:3])
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[4]:
