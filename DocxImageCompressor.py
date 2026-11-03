@@ -304,7 +304,7 @@ class App(tk.Tk):
         row3 = ttk.Frame(self.ren_opts); row3.pack(anchor="w", pady=4)
         ttk.Label(row3, text="Сортування:").pack(side=tk.LEFT)
         ttk.Combobox(row3, textvariable=self.sort_var, values=list(SORT_OPTIONS), state="readonly", width=25).pack(side=tk.LEFT, padx=6)
-        ttk.Checkbutton(self.ren_opts, text="Dry-run (перегляд)", variable=self.dry_run_var).pack(anchor="w", pady=4)
+        ttk.Checkbutton(self.ren_opts, text="Тільки попередній перегляд", variable=self.dry_run_var).pack(anchor="w", pady=4)
         
         self.lbl_convert_hint = ttk.Label(frm, text="Потрібен Microsoft Word для конвертації.", foreground="#555")
         self.lbl_convert_hint.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
