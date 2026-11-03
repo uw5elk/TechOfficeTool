@@ -1,3 +1,4 @@
+import time
 #!/usr/bin/env python3
 import os, sys, json, shutil, zipfile, tempfile, threading, traceback
 from datetime import datetime
@@ -117,7 +118,11 @@ def batch_rename_photos(root: Path, recursive: bool, template: str, start: int, 
     for src, dst in result["planned"]:
         if str(src) == str(dst): continue
         try:
-            src.rename(dst)
+            try:
+                            src.rename(dst)
+                        except FileNotFoundError:
+                            time.sleep(0.3)
+                            src.rename(dst)
             log_data["mapping"].append({"old": str(src), "new": str(dst)})
             result["count"] += 1
         except Exception: pass
@@ -453,17 +458,43 @@ class App(tk.Tk):
             ok, err, mapping, used, n = 0, 0, [], {}, self.start_num_var.get()
             errors_text = []
             for i, src in enumerate([s for s, _ in planned], 1):
-                base = _format_name(tmpl, n, src); ext = src.suffix; dst = src.parent / f"{base}{ext}"
+                base = _format_name(tmpl, n, src)
+                ext = src.suffix
+                dst = src.parent / f"{base}{ext}"
                 k = 1
                 while (dst.exists() and str(dst) != str(src)) or str(dst).lower() in used:
-                    dst = src.parent / f"{base}_{k}{ext}"; k += 1
+                    dst = src.parent / f"{base}_{k}{ext}"
+                    k += 1
                 used[str(dst).lower()] = True
-                self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
+                name = src.name[:50]
+                self.after(0, lambda i=i, t=total, n=name: self._upd(i, t, n))
+                
                 try:
                     if str(src) != str(dst):
-                        src.rename(dst); mapping.append({"old": str(src), "new": str(dst)})
-                    ok += 1
-                except Exception as e: err += 1; errors_text.append(f"{src.name}: {e}")
+                        success = False
+                        for attempt in range(5):
+                            try:
+                                if src.exists():
+                                    src.rename(dst)
+                                    mapping.append({"old": str(src), "new": str(dst)})
+                                    success = True
+                                    break
+                            except FileNotFoundError:
+                                time.sleep(0.3)
+                            except Exception:
+                                time.sleep(0.3)
+                        
+                        if success:
+                            ok += 1
+                        else:
+                            err += 1
+                            errors_text.append(f"{src.name}: Файл заблоковано")
+                    else:
+                        ok += 1
+                except Exception as e:
+                    err += 1
+                    errors_text.append(f"{src.name}: {e}")
+                
                 n += self.step_var.get()
             if mapping:
                 try:
