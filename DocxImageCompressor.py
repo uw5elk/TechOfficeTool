@@ -232,7 +232,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Word / Images Tool | UW5ELK")
-        self.geometry("800x720")
+        self.geometry("800x550")
         self.minsize(680, 620)
         self.configure(bg="#2d2d2d")
         style = ttk.Style(self)
