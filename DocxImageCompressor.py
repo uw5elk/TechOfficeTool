@@ -199,9 +199,6 @@ def convert_doc_to_docx(src: Path, dst: Path) -> dict:
         try: pythoncom.CoUninitialize()
         except Exception: pass
 
-def find_files_for_convert(root: Path) -> list:
-    return [f for f in root.rglob("*") if f.is_file() and not f.name.startswith("~$") and (f.suffix.lower() == ".doc" or (f.suffix.lower() == ".docx" and not is_valid_docx(f)))]
-
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -391,8 +388,8 @@ class App(tk.Tk):
         elif mode == MODES[1]:
             rec = self.recursive_var.get()
             delete_doc = self.delete_doc_var.get()
-            files = find_files_for_convert(input_path) if rec else [f for f in input_path.glob("*") if f.is_file() and not f.name.startswith("~$") and (f.suffix.lower() == ".doc" or (f.suffix.lower() == ".docx" and not is_valid_docx(f)))]
-            if not files: self.after(0, lambda: self._done("Немає .doc")); return
+            files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and not f.name.startswith("~$") and f.suffix.lower() == ".doc"]
+            if not files: self.after(0, lambda: self._done("У папці не знайдено файлів .doc для конвертації.")); return
             total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
             ok, fail, deleted = 0, 0, 0
             for i, src in enumerate(files, 1):
@@ -407,7 +404,7 @@ class App(tk.Tk):
                     ok += 1
                     if delete_doc and src.suffix.lower() == ".doc":
                         try:
-                            if res.get("new", 0) > 0: # Перевіряємо, що файл створився
+                            if res.get("new", 0) > 10: # Файл має бути більше 10 байт
                                 os.remove(src)
                                 deleted += 1
                         except Exception:
