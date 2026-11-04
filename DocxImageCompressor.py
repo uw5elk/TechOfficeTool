@@ -443,7 +443,7 @@ class App(tk.Tk):
             
             files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
             if not files:
-                self.after(0, lambda: self._done("У вибраній папці не знайдено зображень.")); return
+                self.after(0, lambda: self._done("У вибраній папці не знайдено зображень для перейменування.")); return
             
             if self.sort_var.get() == "За іменем": files.sort(key=lambda p: p.name.lower())
             elif self.sort_var.get().startswith("За датою"): files.sort(key=lambda p: _get_date_for_sort(p, self.sort_var.get()))
