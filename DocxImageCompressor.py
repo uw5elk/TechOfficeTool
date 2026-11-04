@@ -429,15 +429,9 @@ class App(tk.Tk):
                 res = process_one_image(src, dst, level["max_side"], level["quality"], level["png2jpg"], keep_exif)
                 if res["ok"]: ok += 1; old_sum += res["old"]; new_sum += res["new"]
                 else: err += 1; err_files.append(src.name)
-            msg = f"Готово! Оброблено: {ok}/{total}
-Було: {old_sum/1024/1024:.1f} MB, Стало: {new_sum/1024/1024:.1f} MB"
-            if old_sum > 0: msg += f"
-Зменшення: {(1 - new_sum / old_sum) * 100:.1f}%"
-            if err: msg += f"
-Помилок: {err}
-Не вдалося обробити:
-" + "
-".join(err_files[:5])
+            msg = f"Готово! Оброблено: {ok}/{total}\nБуло: {old_sum/1024/1024:.1f} MB, Стало: {new_sum/1024/1024:.1f} MB"
+            if old_sum > 0: msg += f"\nЗменшення: {(1 - new_sum / old_sum) * 100:.1f}%"
+            if err: msg += f"\nПомилок: {err}\nНе вдалося обробити:\n" + "\n".join(err_files[:5])
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[3]:
             tmpl = self.template_var.get().strip() or "IMG_{n:04d}"
@@ -496,7 +490,6 @@ class App(tk.Tk):
             if errors_text: msg += "
 
 Деталі помилок:
-" + "
 ".join(errors_text[:3])
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[4]:
@@ -519,8 +512,6 @@ class App(tk.Tk):
             if errs > 0: msg += "
 
 Не вдалося обробити:
-" + "
-".join(err_files[:5])
             if backup: msg += "
 Оригінали збережено як *.bak"
             self.after(0, lambda: self._done(msg))
