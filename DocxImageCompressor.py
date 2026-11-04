@@ -418,6 +418,114 @@ class App(tk.Tk):
             if delete_doc and deleted > 0: msg += f"\nВидалено оригіналів .doc: {deleted}"
             if fail > 0: msg += "\n\nНе вдалося конвертувати:\n" + "\n".join(err_files[:5])
 
+        elif mode == MODES[2]:
+            rec = self.recursive_var.get(); keep_exif = self.keep_exif_var.get()
+            files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
+            if not files: self.after(0, lambda: self._done("Немає зображень")); return
+            total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
+            old_sum = new_sum = ok = err = 0
+            err_files = []
+            for i, src in enumerate(files, 1):
+                dst = output_path / src.relative_to(input_path)
+                self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
+                res = process_one_image(src, dst, level["max_side"], level["quality"], level["png2jpg"], keep_exif)
+                if res["ok"]: ok += 1; old_sum += res["old"]; new_sum += res["new"]
+                else: err += 1; err_files.append(src.name)
+            msg = f"Готово! Оброблено: {ok}/{total}
+Було: {old_sum/1024/1024:.1f} MB, Стало: {new_sum/1024/1024:.1f} MB"
+            if old_sum > 0: msg += f"
+Зменшення: {(1 - new_sum / old_sum) * 100:.1f}%"
+            if err: msg += f"
+Помилок: {err}
+Не вдалося обробити:
+" + "
+".join(err_files[:5])
+            self.after(0, lambda: self._done(msg))
+        elif mode == MODES[3]:
+            tmpl = self.template_var.get().strip() or "IMG_{n:04d}"
+            dry = self.dry_run_var.get(); rec = self.recursive_var.get()
+            self.after(0, lambda: self.status.configure(text="Аналіз..."))
+            files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
+            if not files:
+                self.after(0, lambda: self._done("У вибраній папці не знайдено зображень для перейменування.")); return
+            if self.sort_var.get() == "За іменем": files.sort(key=lambda p: p.name.lower())
+            elif self.sort_var.get().startswith("За датою"): files.sort(key=lambda p: _get_date_for_sort(p, self.sort_var.get()))
+            used = {}
+            n = self.start_num_var.get()
+            planned = []
+            for src in files:
+                base = _format_name(tmpl, n, src)
+                ext = src.suffix
+                candidate = src.parent / f"{base}{ext}"
+                k = 1
+                while (candidate.exists() and str(candidate) != str(src)) or str(candidate).lower() in used:
+                    candidate = src.parent / f"{base}_{k}{ext}"
+                    k += 1
+                used[str(candidate).lower()] = True
+                planned.append((src, candidate))
+                n += 1
+            if dry:
+                lines = [f"Знайдено: {len(planned)}", "План (перші 50):"]
+                for s, d in planned[:50]: lines.append(f"{s.name} → {d.name}")
+                if len(planned) > 50: lines.append(f"... ще {len(planned)-50}")
+                self.after(0, lambda: self._done("
+".join(lines))); return
+            total = len(planned); self.after(0, lambda: self.progress.configure(maximum=total))
+            ok, err = 0, 0
+            errors_text = []
+            for i, (src, dst) in enumerate(planned, 1):
+                self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
+                if str(src) == str(dst):
+                    ok += 1
+                    continue
+                success = False
+                for attempt in range(5):
+                    try:
+                        src.rename(dst)
+                        success = True
+                        break
+                    except FileNotFoundError:
+                        time.sleep(0.5)
+                    except PermissionError:
+                        time.sleep(0.5)
+                    except Exception as e:
+                        errors_text.append(f"{src.name}: {e}")
+                        break
+                if success: ok += 1
+                else: err += 1
+            msg = f"Перейменовано: {ok}
+Помилок: {err}"
+            if errors_text: msg += "
+
+Деталі помилок:
+" + "
+".join(errors_text[:3])
+            self.after(0, lambda: self._done(msg))
+        elif mode == MODES[4]:
+            rec = self.recursive_var.get(); keep_icc = self.keep_icc_var.get(); paranoid = self.paranoid_var.get(); backup = self.backup_var.get()
+            files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
+            if not files: self.after(0, lambda: self._done("Немає зображень")); return
+            total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
+            cleaned = already = errs = 0
+            err_files = []
+            for i, src in enumerate(files, 1):
+                self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
+                r = strip_exif_one(src, keep_icc, paranoid, backup)
+                if r == "cleaned": cleaned += 1
+                elif r == "already_clean": already += 1
+                else: errs += 1; err_files.append(src.name)
+            msg = f"Очищено: {cleaned}
+Без EXIF: {already}
+Помилок: {errs}
+Всього: {total}"
+            if errs > 0: msg += "
+
+Не вдалося обробити:
+" + "
+".join(err_files[:5])
+            if backup: msg += "
+Оригінали збережено як *.bak"
+            self.after(0, lambda: self._done(msg))
     def _upd(self, i, total, name):
         self.progress["value"] = i; self.status.configure(text=f"Обробка {i} з {total}"); self.detail.configure(text=name)
 
