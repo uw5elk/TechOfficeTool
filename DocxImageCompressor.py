@@ -229,7 +229,6 @@ class App(tk.Tk):
         self.dry_run_var = tk.BooleanVar(value=True)
         self.template_var = tk.StringVar(value="IMG_{n:04d}")
         self.start_num_var = tk.IntVar(value=1)
-        self.step_var = tk.IntVar(value=1)
         self.sort_var = tk.StringVar(value=SORT_OPTIONS[0])
         self._build_ui()
         self._on_mode_change()
@@ -280,8 +279,7 @@ class App(tk.Tk):
         row2 = ttk.Frame(self.ren_opts); row2.pack(anchor="w", pady=4)
         ttk.Label(row2, text="Старт:").pack(side=tk.LEFT)
         ttk.Spinbox(row2, from_=0, to=999999, width=8, textvariable=self.start_num_var).pack(side=tk.LEFT, padx=6)
-        ttk.Label(row2, text="Крок:").pack(side=tk.LEFT, padx=6)
-        ttk.Spinbox(row2, from_=1, to=10000, width=6, textvariable=self.step_var).pack(side=tk.LEFT, padx=6)
+        # Поле 'Крок' видалено для спрощення
         row3 = ttk.Frame(self.ren_opts); row3.pack(anchor="w", pady=4)
         ttk.Label(row3, text="Сортування:").pack(side=tk.LEFT)
         ttk.Combobox(row3, textvariable=self.sort_var, values=list(SORT_OPTIONS), state="readonly", width=25).pack(side=tk.LEFT, padx=6)
@@ -432,7 +430,7 @@ class App(tk.Tk):
                     k += 1
                 used[str(candidate).lower()] = True
                 planned.append((src, candidate))
-                n += self.step_var.get()
+                n += 1
                 
             if dry:
                 lines = [f"Знайдено: {len(planned)}", "План (перші 50):"]
