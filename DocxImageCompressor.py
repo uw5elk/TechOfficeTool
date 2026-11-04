@@ -396,15 +396,20 @@ class App(tk.Tk):
             total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
             ok, fail, deleted = 0, 0, 0
             for i, src in enumerate(files, 1):
-                dst = output_path / (src.relative_to(input_path) if str(src).startswith(str(input_path)) else src.name)
+                try:
+                    rel_path = src.relative_to(input_path)
+                    dst = output_path / rel_path
+                except ValueError:
+                    dst = output_path / src.name
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 res = convert_doc_to_docx(src, dst)
                 if res["ok"] and res.get("action") == "convert":
                     ok += 1
                     if delete_doc and src.suffix.lower() == ".doc":
                         try:
-                            os.remove(src)
-                            deleted += 1
+                            if res.get("new", 0) > 0: # Перевіряємо, що файл створився
+                                os.remove(src)
+                                deleted += 1
                         except Exception:
                             pass
                 elif res["ok"]:
@@ -414,6 +419,9 @@ class App(tk.Tk):
             msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
             if delete_doc and deleted > 0: msg += f"
 Видалено оригіналів .doc: {deleted}"
+            if fail > 0: msg += "
+
+Увага: Деякі файли не вдалося конвертувати. Перевірте, чи встановлено Microsoft Word."
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[2]:
             rec = self.recursive_var.get(); keep_exif = self.keep_exif_var.get()
