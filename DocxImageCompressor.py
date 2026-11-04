@@ -401,7 +401,7 @@ class App(tk.Tk):
                     dst = output_path / src.name
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 res = convert_doc_to_docx(src, dst)
-                if res["ok"] and res.get("action") == "convert":
+                if res["ok"]:
                     ok += 1
                     if delete_doc and src.suffix.lower() == ".doc":
                         try:
@@ -410,8 +410,6 @@ class App(tk.Tk):
                                 deleted += 1
                         except Exception:
                             pass
-                elif res["ok"]:
-                    ok += 1  # Скопійовано, але не сконвертовано
                 else: 
                     fail += 1
             msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
