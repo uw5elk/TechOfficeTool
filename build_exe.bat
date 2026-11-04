@@ -24,5 +24,5 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name "TechOffic
     --collect-submodules win32com ^
     DocxImageCompressor.py
 echo.
-echo Finished! EXE is here: %CD%\dist\TechOfficeTool_test.exe
+echo Finished! EXE is here: %CD%\dist\TechOfficeTool.exe
 pause
