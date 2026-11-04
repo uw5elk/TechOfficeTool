@@ -169,6 +169,11 @@ def convert_doc_to_docx(src: Path, dst: Path) -> dict:
         doc = word.Documents.Open(FileName=str(src), ConfirmConversions=False, ReadOnly=False, AddToRecentFiles=False, NoEncodingDialog=True)
         out_file = dst.with_suffix(".docx")
         out_file.parent.mkdir(parents=True, exist_ok=True)
+        if out_file.exists() and str(out_file) != str(src):
+            k = 1
+            while out_file.exists():
+                out_file = dst.with_name(f"{dst.stem}_{k}.docx")
+                k += 1
         doc.SaveAs(FileName=str(out_file.resolve()), FileFormat=16)
         doc.Close(SaveChanges=False)
         doc = None
@@ -394,7 +399,7 @@ class App(tk.Tk):
                 dst = output_path / (src.relative_to(input_path) if str(src).startswith(str(input_path)) else src.name)
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 res = convert_doc_to_docx(src, dst)
-                if res["ok"]: 
+                if res["ok"] and res.get("action") == "convert":
                     ok += 1
                     if delete_doc and src.suffix.lower() == ".doc":
                         try:
@@ -402,6 +407,8 @@ class App(tk.Tk):
                             deleted += 1
                         except Exception:
                             pass
+                elif res["ok"]:
+                    ok += 1  # Скопійовано, але не сконвертовано
                 else: 
                     fail += 1
             msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
