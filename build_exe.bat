@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Build EXE - Word Compressor (UW5ELK)
+title Build EXE - TechOfficeTool (UW5ELK)
 python --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python not found!
