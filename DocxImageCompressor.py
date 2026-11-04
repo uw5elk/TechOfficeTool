@@ -417,3 +417,14 @@ class App(tk.Tk):
             msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
             if delete_doc and deleted > 0: msg += f"\nВидалено оригіналів .doc: {deleted}"
             if fail > 0: msg += "\n\nНе вдалося конвертувати:\n" + "\n".join(err_files[:5])
+
+    def _upd(self, i, total, name):
+        self.progress["value"] = i; self.status.configure(text=f"Обробка {i} з {total}"); self.detail.configure(text=name)
+
+    def _done(self, msg):
+        self.running = False; self.start_btn.configure(state="normal"); self.status.configure(text="Завершено"); self.detail.configure(text="")
+        messagebox.showinfo("Результат", msg)
+
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
