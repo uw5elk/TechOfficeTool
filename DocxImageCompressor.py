@@ -460,8 +460,7 @@ class App(tk.Tk):
                 lines = [f"Знайдено: {len(planned)}", "План (перші 50):"]
                 for s, d in planned[:50]: lines.append(f"{s.name} → {d.name}")
                 if len(planned) > 50: lines.append(f"... ще {len(planned)-50}")
-                self.after(0, lambda: self._done("
-".join(lines))); return
+                self.after(0, lambda: self._done("\n".join(lines))); return
             total = len(planned); self.after(0, lambda: self.progress.configure(maximum=total))
             ok, err = 0, 0
             errors_text = []
@@ -485,12 +484,8 @@ class App(tk.Tk):
                         break
                 if success: ok += 1
                 else: err += 1
-            msg = f"Перейменовано: {ok}
-Помилок: {err}"
-            if errors_text: msg += "
-
-Деталі помилок:
-".join(errors_text[:3])
+            msg = f"Перейменовано: {ok}\nПомилок: {err}"
+            if errors_text: msg += "\n\nДеталі помилок:\n" + "\n".join(errors_text[:3])
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[4]:
             rec = self.recursive_var.get(); keep_icc = self.keep_icc_var.get(); paranoid = self.paranoid_var.get(); backup = self.backup_var.get()
@@ -505,15 +500,9 @@ class App(tk.Tk):
                 if r == "cleaned": cleaned += 1
                 elif r == "already_clean": already += 1
                 else: errs += 1; err_files.append(src.name)
-            msg = f"Очищено: {cleaned}
-Без EXIF: {already}
-Помилок: {errs}
-Всього: {total}"
-            if errs > 0: msg += "
-
-Не вдалося обробити:
-            if backup: msg += "
-Оригінали збережено як *.bak"
+            msg = f"Очищено: {cleaned}\nБез EXIF: {already}\nПомилок: {errs}\nВсього: {total}"
+            if errs > 0: msg += "\n\nНе вдалося обробити:\n" + "\n".join(err_files[:5])
+            if backup: msg += "\nОригінали збережено як *.bak"
             self.after(0, lambda: self._done(msg))
     def _upd(self, i, total, name):
         self.progress["value"] = i; self.status.configure(text=f"Обробка {i} з {total}"); self.detail.configure(text=name)
