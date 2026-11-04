@@ -405,7 +405,7 @@ class App(tk.Tk):
                     ok += 1
                     if delete_doc and src.suffix.lower() == ".doc":
                         try:
-                            if res.get("new", 0) > 10: # Файл має бути більше 10 байт
+                            if res.get("new", 0) > 10:
                                 os.remove(src)
                                 deleted += 1
                         except Exception:
@@ -415,7 +415,7 @@ class App(tk.Tk):
             msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
             if delete_doc and deleted > 0: msg += f"\nВидалено оригіналів .doc: {deleted}"
             if fail > 0: msg += "\n\nНе вдалося конвертувати:\n" + "\n".join(err_files[:5])
-
+            self.after(0, lambda: self._done(msg))
         elif mode == MODES[2]:
             rec = self.recursive_var.get(); keep_exif = self.keep_exif_var.get()
             files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
@@ -504,6 +504,7 @@ class App(tk.Tk):
             if errs > 0: msg += "\n\nНе вдалося обробити:\n" + "\n".join(err_files[:5])
             if backup: msg += "\nОригінали збережено як *.bak"
             self.after(0, lambda: self._done(msg))
+
     def _upd(self, i, total, name):
         self.progress["value"] = i; self.status.configure(text=f"Обробка {i} з {total}"); self.detail.configure(text=name)
 
