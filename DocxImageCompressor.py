@@ -227,6 +227,7 @@ class App(tk.Tk):
         self.paranoid_var = tk.BooleanVar(value=False)
         self.backup_var = tk.BooleanVar(value=True)
         self.dry_run_var = tk.BooleanVar(value=True)
+        self.delete_doc_var = tk.BooleanVar(value=False)
         self.template_var = tk.StringVar(value="IMG_{n:04d}")
         self.start_num_var = tk.IntVar(value=1)
         self.sort_var = tk.StringVar(value=SORT_OPTIONS[0])
@@ -285,6 +286,11 @@ class App(tk.Tk):
         ttk.Combobox(row3, textvariable=self.sort_var, values=list(SORT_OPTIONS), state="readonly", width=25).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(self.ren_opts, text="Тільки попередній перегляд", variable=self.dry_run_var).pack(anchor="w", pady=4)
         
+        self.conv_opts = ttk.Frame(frm)
+        self.conv_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
+        ttk.Checkbutton(self.conv_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
+        ttk.Checkbutton(self.conv_opts, text="Видаляти оригінальні .doc після конвертації", variable=self.delete_doc_var).pack(anchor="w")
+
         self.lbl_convert_hint = ttk.Label(frm, text="Потрібен Microsoft Word для конвертації.", foreground="#aaaaaa")
         self.lbl_convert_hint.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
         self.status = ttk.Label(frm, text="Оберіть режим і натисніть «Старт»", foreground="#aaaaaa")
@@ -301,7 +307,7 @@ class App(tk.Tk):
         frm.columnconfigure(0, weight=1)
 
     def _hide_all_blocks(self):
-        for w in (self.lbl_level, self.level_cb, self.img_opts, self.exif_opts, self.ren_opts, self.lbl_convert_hint): w.grid_remove()
+        for w in (self.lbl_level, self.level_cb, self.img_opts, self.exif_opts, self.ren_opts, self.conv_opts, self.lbl_convert_hint): w.grid_remove()
     
     def _on_mode_change(self):
         self._hide_all_blocks()
@@ -309,7 +315,7 @@ class App(tk.Tk):
         if mode == MODES[0]:
             self.lbl_level.grid(); self.level_cb.grid(); self.lbl_in.configure(text="Папка .docx:"); self._show_output(True)
         elif mode == MODES[1]:
-            self.lbl_convert_hint.grid(); self.lbl_in.configure(text="Папка .doc/.docx:"); self._show_output(True)
+            self.conv_opts.grid(); self.lbl_convert_hint.grid(); self.lbl_in.configure(text="Папка .doc/.docx:"); self._show_output(True)
         elif mode == MODES[2]:
             self.lbl_level.grid(); self.level_cb.grid(); self.img_opts.grid(); self.lbl_in.configure(text="Папка зображень:"); self._show_output(True)
         elif mode == MODES[3]:
@@ -378,17 +384,30 @@ class App(tk.Tk):
             if errs: msg += f"\nПомилок: {errs}"
             self.after(0, lambda: self._done(msg))
         elif mode == MODES[1]:
-            files = find_files_for_convert(input_path)
+            rec = self.recursive_var.get()
+            delete_doc = self.delete_doc_var.get()
+            files = find_files_for_convert(input_path) if rec else [f for f in input_path.glob("*") if f.is_file() and not f.name.startswith("~$") and (f.suffix.lower() == ".doc" or (f.suffix.lower() == ".docx" and not is_valid_docx(f)))]
             if not files: self.after(0, lambda: self._done("Немає .doc")); return
             total = len(files); self.after(0, lambda: self.progress.configure(maximum=total))
-            ok, fail = 0, 0
+            ok, fail, deleted = 0, 0, 0
             for i, src in enumerate(files, 1):
                 dst = output_path / (src.relative_to(input_path) if str(src).startswith(str(input_path)) else src.name)
                 self.after(0, lambda i=i, t=total, n=src.name[:50]: self._upd(i, t, n))
                 res = convert_doc_to_docx(src, dst)
-                if res["ok"]: ok += 1
-                else: fail += 1
-            self.after(0, lambda: self._done(f"Готово! Конвертовано: {ok}, Помилок: {fail}"))
+                if res["ok"]: 
+                    ok += 1
+                    if delete_doc and src.suffix.lower() == ".doc":
+                        try:
+                            os.remove(src)
+                            deleted += 1
+                        except Exception:
+                            pass
+                else: 
+                    fail += 1
+            msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
+            if delete_doc and deleted > 0: msg += f"
+Видалено оригіналів .doc: {deleted}"
+            self.after(0, lambda: self._done(msg))
         elif mode == MODES[2]:
             rec = self.recursive_var.get(); keep_exif = self.keep_exif_var.get()
             files = [f for f in (input_path.rglob("*") if rec else input_path.glob("*")) if f.is_file() and f.suffix.lower() in IMG_EXTS]
