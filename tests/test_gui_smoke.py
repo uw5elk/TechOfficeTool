@@ -373,3 +373,35 @@ def test_resource_path_points_next_to_program(gui):
     mod, box = gui
     assert mod._resource("icon.ico").name == "icon.ico"
     assert mod._resource("icon.ico").exists()
+
+
+def test_convert_options_reach_the_job(gui, tmp_path, monkeypatch):
+    mod, box = gui
+    seen = []
+    monkeypatch.setattr(mod, "WIN32_OK", True)
+    monkeypatch.setattr(mod.core, "run_job", lambda cfg, **kw: seen.append(cfg) or "ok")
+    app = mod.App()
+    app.input_var.set(str(tmp_path))
+    app.output_var.set(str(tmp_path / "out"))
+    app.modern_var.set(True)
+    app.start()
+    finish(app)
+    assert seen[0].mode == mod.MODE_CONVERT and seen[0].modern_format is True
+    app.modern_var.set(False)
+    app.start()
+    finish(app)
+    assert seen[1].modern_format is False
+
+
+def test_garbage_in_rename_start_field_does_not_block_other_modes(gui, tmp_path):
+    mod, box = gui
+    Image.effect_noise((400, 300), 60).convert("RGB").save(tmp_path / "a.png")
+    app = mod.App()
+    app.mode_var.set(mod.MODE_IMAGES)
+    app.input_var.set(str(tmp_path))
+    app.output_var.set(str(tmp_path / "out"))
+    app.start_num_var.set("abc")  # поле з іншого режиму
+    app.start()
+    assert app.running
+    finish(app)
+    assert not messages(box, "showerror")

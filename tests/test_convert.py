@@ -286,3 +286,80 @@ def test_word_converter_cleans_up_com_when_start_fails(monkeypatch):
         with conv:
             pass
     assert closed == [1]
+
+
+# ------------------------------------------- макроси та режим сумісності --
+class RecordingDoc(FakeDoc):
+    """Документ, що запам'ятовує, яким методом його зберігали."""
+
+    def __init__(self, has_macros=False, saveas2_fails=False):
+        super().__init__("ok")
+        self.HasVBProject = has_macros
+        self.saveas2_fails = saveas2_fails
+        self.calls = []
+
+    def SaveAs2(self, FileName, FileFormat, CompatibilityMode):
+        self.calls.append(("SaveAs2", FileFormat, CompatibilityMode))
+        if self.saveas2_fails:
+            raise RuntimeError("SaveAs2 is not supported")
+        Path(FileName).write_bytes(minimal_docx_bytes())
+
+    def SaveAs(self, FileName, FileFormat):
+        self.calls.append(("SaveAs", FileFormat))
+        super().SaveAs(FileName, FileFormat)
+
+
+class OneDocFactory:
+    def __init__(self, doc):
+        self.doc = doc
+        self.conv = conv_with()
+        self.conv.word.Documents.Open = lambda **kw: doc
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        return self.conv
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_default_save_keeps_old_behaviour(tmp_path):
+    doc = RecordingDoc()
+    make_doc(tmp_path / "a.doc")
+    c.run_job(cfg(tmp_path), converter_factory=OneDocFactory(doc))
+    assert doc.calls == [("SaveAs", 16)]
+
+
+def test_modern_format_saves_without_compatibility_mode(tmp_path):
+    doc = RecordingDoc()
+    make_doc(tmp_path / "a.doc")
+    msg = c.run_job(cfg(tmp_path, modern_format=True), converter_factory=OneDocFactory(doc))
+    assert doc.calls == [("SaveAs2", 16, 65535)]
+    assert "Конвертовано: 1" in msg and c.is_valid_docx_deep(tmp_path / "a.docx")
+
+
+def test_modern_format_falls_back_when_saveas2_is_unavailable(tmp_path):
+    doc = RecordingDoc(saveas2_fails=True)
+    make_doc(tmp_path / "a.doc")
+    msg = c.run_job(cfg(tmp_path, modern_format=True), converter_factory=OneDocFactory(doc))
+    assert [x[0] for x in doc.calls] == ["SaveAs2", "SaveAs"]
+    assert "Конвертовано: 1, Помилок: 0" in msg
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.doc", "a.docx"]
+
+
+def test_doc_with_macros_is_reported_and_original_is_never_deleted(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "_send2trash", None)
+    make_doc(tmp_path / "macro.doc")
+    msg = c.run_job(cfg(tmp_path, delete_doc=True), converter_factory=OneDocFactory(RecordingDoc(has_macros=True)))
+    assert (tmp_path / "macro.doc").exists() and (tmp_path / "macro.docx").exists()
+    assert "Містили макроси: 1" in msg and "macro.doc" in msg
+    assert "Видалено оригіналів" not in msg
+
+
+def test_doc_without_macros_is_still_deleted_when_requested(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "_send2trash", None)
+    make_doc(tmp_path / "plain.doc")
+    msg = c.run_job(cfg(tmp_path, delete_doc=True), converter_factory=OneDocFactory(RecordingDoc()))
+    assert not (tmp_path / "plain.doc").exists() and "Містили макроси" not in msg

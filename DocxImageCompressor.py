@@ -116,6 +116,7 @@ class App(tk.Tk):
         self.backup_var = tk.BooleanVar(value=True)
         self.dry_run_var = tk.BooleanVar(value=True)
         self.delete_doc_var = tk.BooleanVar(value=False)
+        self.modern_var = tk.BooleanVar(value=False)
         self.template_var = tk.StringVar(value="IMG_{n:04d}")
         self.start_num_var = tk.IntVar(value=1)
         self.sort_var = tk.StringVar(value=SORT_OPTIONS[0])
@@ -187,6 +188,7 @@ class App(tk.Tk):
         self.conv_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
         ttk.Checkbutton(self.conv_opts, text="Включати підпапки", variable=self.recursive_var).pack(anchor="w")
         ttk.Checkbutton(self.conv_opts, text="Видаляти оригінальні .doc після конвертації (у кошик)", variable=self.delete_doc_var).pack(anchor="w")
+        ttk.Checkbutton(self.conv_opts, text="Без режиму сумісності (верстка може трохи змінитись)", variable=self.modern_var).pack(anchor="w")
 
         self.lbl_convert_hint = ttk.Label(frm, text="Потрібен Microsoft Word для конвертації.", foreground="#aaaaaa")
         self.lbl_convert_hint.grid(row=10, column=0, columnspan=3, sticky="w", **pad)
@@ -279,12 +281,13 @@ class App(tk.Tk):
         if mode == MODE_CONVERT and not WIN32_OK:
             messagebox.showerror("Помилка", "Для конвертації потрібен pywin32.")
             return
-        try:
-            start_num = int(self.start_num_var.get())
-        except Exception:
-            messagebox.showerror("Помилка", "Поле «Старт» має бути цілим числом.")
-            return
+        start_num = 1
         if mode == MODE_RENAME:
+            try:
+                start_num = int(self.start_num_var.get())
+            except Exception:
+                messagebox.showerror("Помилка", "Поле «Старт» має бути цілим числом.")
+                return
             bad = core.validate_template(self.template_var.get().strip() or "IMG_{n:04d}")
             if bad:
                 messagebox.showerror("Помилка", bad)
@@ -316,6 +319,7 @@ class App(tk.Tk):
             backup=self.backup_var.get(),
             dry_run=self.dry_run_var.get(),
             delete_doc=self.delete_doc_var.get(),
+            modern_format=self.modern_var.get(),
             template=self.template_var.get(),
             start_num=start_num,
             sort=self.sort_var.get(),

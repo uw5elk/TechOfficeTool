@@ -178,3 +178,128 @@ def test_transparent_png_keeps_png_format_inside_docx(tmp_path, noise):
         assert media == ["word/media/image1.png"]
         with Image.open(io.BytesIO(z.read(media[0]))) as im:
             assert im.format == "PNG" and im.mode == "RGBA"
+
+
+# ------------------------------------------------- розмір за ppi на сторінці --
+def _media_sizes(path):
+    out = {}
+    with zipfile.ZipFile(path) as z:
+        for n in z.namelist():
+            if n.startswith("word/media/"):
+                with Image.open(io.BytesIO(z.read(n))) as im:
+                    out[n] = im.size
+    return out
+
+
+def _add_vml_picture(d, image_path, style):
+    from docx.oxml import parse_xml
+
+    rid, _ = d.part.get_or_add_image(str(image_path))
+    xml = (
+        '<w:pict xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<v:shape %s><v:imagedata r:id="%s"/></v:shape></w:pict>' % (style, rid)
+    )
+    d.add_paragraph().add_run()._r.append(parse_xml(xml))
+
+
+def test_small_picture_on_page_is_downscaled_to_ppi(tmp_path, noise):
+    img = _png(tmp_path / "p.png", noise)  # 1800x1200
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(img), width=Inches(2))
+    d.save(f)
+    r = c.process_one_docx(f, f, 1600, 82, True, ppi=150)
+    assert r["ok"] and r["images"] == 1
+    (size,) = _media_sizes(f).values()
+    assert 298 <= max(size) <= 304, size  # 2 дюйми * 150 ppi = 300 px
+    shapes = docx.Document(str(f)).inline_shapes
+    assert abs(shapes[0].width.inches - 2) < 0.01  # на сторінці розмір той самий
+
+
+def test_without_ppi_only_max_side_applies(tmp_path, noise):
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(_png(tmp_path / "p.png", noise)), width=Inches(2))
+    d.save(f)
+    c.process_one_docx(f, f, 1600, 82, True)
+    (size,) = _media_sizes(f).values()
+    assert max(size) == 1600
+
+
+def test_picture_used_twice_keeps_pixels_for_the_larger_use(tmp_path, noise):
+    img = _png(tmp_path / "p.png", noise)
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(img), width=Inches(2))
+    d.add_picture(str(img), width=Inches(5))
+    d.save(f)
+    c.process_one_docx(f, f, 1600, 82, True, ppi=150)
+    sizes = _media_sizes(f)
+    assert len(sizes) == 1
+    assert 748 <= max(next(iter(sizes.values()))) <= 754  # 5 дюймів * 150 ppi
+
+
+def test_cropped_picture_keeps_enough_pixels(tmp_path, noise):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(_png(tmp_path / "p.png", noise)), width=Inches(2))
+    blip = d.element.body.xpath(".//a:blip")[0]
+    crop = OxmlElement("a:srcRect")
+    crop.set("l", "50000")  # видно лише праву половину зображення
+    blip.addnext(crop)
+    assert blip.getparent().tag == qn("pic:blipFill")
+    d.save(f)
+    c.process_one_docx(f, f, 1600, 82, True, ppi=150)
+    (size,) = _media_sizes(f).values()
+    assert 598 <= max(size) <= 604  # видима половина = 2 дюйми -> усе зображення 600 px
+
+
+def test_reference_with_unknown_size_falls_back_to_max_side(tmp_path, noise):
+    img = _png(tmp_path / "p.png", noise)
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(img), width=Inches(2))
+    _add_vml_picture(d, img, "")  # те саме зображення, але розмір не вказано
+    d.save(f)
+    c.process_one_docx(f, f, 1600, 82, True, ppi=150)
+    (size,) = _media_sizes(f).values()
+    assert max(size) == 1600  # не ризикуємо: лише загальне обмеження
+
+
+def test_vml_picture_size_is_respected(tmp_path, noise):
+    img = _png(tmp_path / "p.png", noise)
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    _add_vml_picture(d, img, 'style="position:absolute;width:288pt;height:192pt"')  # 4 x 2.67 дюйма
+    d.save(f)
+    r = c.process_one_docx(f, f, 1600, 82, True, ppi=150)
+    assert r["ok"]
+    (size,) = _media_sizes(f).values()
+    assert 598 <= max(size) <= 604  # 4 дюйми * 150 ppi
+
+
+def test_ppi_never_upscales_and_respects_max_side(tmp_path, noise):
+    f = tmp_path / "doc.docx"
+    d = docx.Document()
+    d.add_picture(str(_jpg(tmp_path / "j.jpg", noise, (3000, 2000))), width=Inches(40))  # величезний на сторінці
+    d.save(f)
+    c.process_one_docx(f, f, 1600, 82, True, ppi=220)
+    (size,) = _media_sizes(f).values()
+    assert max(size) == 1600
+
+
+def test_run_job_uses_level_ppi_for_docx(tmp_path, noise):
+    d = docx.Document()
+    d.add_picture(str(_png(tmp_path / "p.png", noise)), width=Inches(2))
+    (tmp_path / "docs").mkdir()
+    d.save(tmp_path / "docs" / "a.docx")
+    lv = c.LEVELS["Для екрану (≈150 ppi)"]
+    c.run_job(c.JobConfig(mode=c.MODE_DOCX, input_dir=tmp_path / "docs", output_dir=tmp_path / "docs", level=lv))
+    (size,) = _media_sizes(tmp_path / "docs" / "a.docx").values()
+    assert 298 <= max(size) <= 304
+    assert c.LEVELS["Максимальна якість (архів)"]["ppi"] is None

@@ -12,13 +12,16 @@ from __future__ import annotations
 import io
 import logging
 import logging.handlers
+import math
 import os
+import posixpath
 import re
 import shutil
 import struct
 import tempfile
 import time
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -50,11 +53,12 @@ except ImportError:
 # --------------------------------------------------------------------------- #
 
 LEVELS = {
-    "Максимальна якість (архів)": {"max_side": 4000, "quality": 95, "png2jpg": False},
-    "Для друку (≈220 ppi)": {"max_side": 2400, "quality": 88, "png2jpg": True},
-    "Для екрану (≈150 ppi)": {"max_side": 1600, "quality": 82, "png2jpg": True},
-    "Сильне стиснення": {"max_side": 1200, "quality": 75, "png2jpg": True},
+    "Максимальна якість (архів)": {"max_side": 4000, "quality": 95, "png2jpg": False, "ppi": None},
+    "Для друку (≈220 ppi)": {"max_side": 2400, "quality": 88, "png2jpg": True, "ppi": 220},
+    "Для екрану (≈150 ppi)": {"max_side": 1600, "quality": 82, "png2jpg": True, "ppi": 150},
+    "Сильне стиснення": {"max_side": 1200, "quality": 75, "png2jpg": True, "ppi": 96},
 }
+# ppi діє лише в .docx: там відомо, якого розміру картинка на сторінці.
 
 MODE_CONVERT = "Конвертувати .doc → .docx"
 MODE_DOCX = "Стиснути зображення в .docx"
@@ -73,7 +77,11 @@ ORIENTATION_TAG = 0x0112
 TMP_SUFFIX = ".tmp_c"
 _BAD_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _CONTENT_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
-_UNSUPPORTED_MODES = {"I", "I;16", "I;16L", "I;16B", "I;16N", "F"}
+_UNSUPPORTED_MODES = {"I", "I;16", "I;16L", "I;16B", "I;16N", "F", "CMYK", "LAB", "HSV", "YCbCr"}
+WD_FORMAT_DOCX = 16  # wdFormatDocumentDefault
+WD_COMPAT_CURRENT = 65535  # wdCurrent: без режиму сумісності
+_EMU_PER_INCH = 914400
+_MIN_SIDE = 64  # менше за це картинки в .docx не зменшуємо
 
 # --------------------------------------------------------------------------- #
 # Журнал
@@ -243,7 +251,6 @@ def _find_files(
 class Encoded:
     data: bytes
     ext: str  # нове розширення з крапкою (нижній регістр)
-    resized: bool
 
 
 def _has_alpha(im: Image.Image) -> bool:
@@ -286,12 +293,10 @@ def encode_image(
     """
     ext = ext.lower()
     if getattr(im, "n_frames", 1) > 1 or im.mode in _UNSUPPORTED_MODES:
-        return None  # анімація / багатосторінковий TIFF / 16-бітні режими
+        return None  # анімація / багатосторінковий TIFF / 16-бітні режими / CMYK
 
     info = dict(im.info)
     icc = info.get("icc_profile")
-    if im.mode in ("CMYK", "LAB", "HSV", "YCbCr"):
-        icc = None  # профіль не відповідає RGB, який ми запишемо
     raw_exif = info.get("exif") if isinstance(info.get("exif"), (bytes, bytearray)) else None
     orientation = _exif_orientation(im)
 
@@ -306,13 +311,11 @@ def encode_image(
         work = im if im.mode in ("RGB", "L") else im.convert("RGB")
 
     w, h = work.size
-    resized = False
     if max(w, h) > max_side:
         ratio = max_side / max(w, h)
         work = work.resize(
             (max(1, int(w * ratio)), max(1, int(h * ratio))), Image.Resampling.LANCZOS
         )
-        resized = True
 
     if ext in (".jpg", ".jpeg"):
         kind, new_ext = ("PNG", ".png") if alpha else ("JPEG", ext)
@@ -341,7 +344,7 @@ def encode_image(
     if icc:
         kw["icc_profile"] = icc
     work.save(buf, kind, **kw)
-    return Encoded(buf.getvalue(), new_ext, resized)
+    return Encoded(buf.getvalue(), new_ext)
 
 
 def compress_file(
@@ -355,8 +358,8 @@ def compress_file(
 ) -> dict:
     """Стискає одне зображення. dst може збігатися з src (стиснення "на місці").
 
-    Файл-результат з'являється атомарно. Якщо результат не менший за оригінал
-    (і не було зменшення розмірів) - лишається оригінал.
+    Файл-результат з'являється атомарно. Якщо результат не менший за оригінал -
+    лишається оригінал (виняток: явне видалення EXIF).
     names - спільний облік імен для всього запуску (див. OutputNames).
     """
     res = {"ok": False, "status": "failed", "old": 0, "new": 0, "path": dst}
@@ -392,7 +395,7 @@ def compress_file(
         use_new = False
         if enc is not None:
             force = exif_mode == "strip" and had_exif
-            use_new = force or enc.resized or len(enc.data) < res["old"]
+            use_new = force or len(enc.data) < res["old"]
 
         if not use_new:
             if not in_place:
@@ -502,9 +505,130 @@ def _rewrite_content_types(data: bytes, renames: dict) -> bytes:
     return data
 
 
-def process_one_docx(src: Path, dst: Path, max_side: int, quality: int, png2jpg: bool) -> dict:
+def _local(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _parse_xml(data: bytes) -> ET.Element:
+    if b"<!DOCTYPE" in data[:4096] or b"<!ENTITY" in data[:4096]:
+        raise ValueError("XML з DOCTYPE не обробляється")
+    return ET.fromstring(data)
+
+
+def _crop_fraction(value) -> float:
+    try:  # a:srcRect: тисячні частки відсотка
+        return min(max(int(value), 0), 100000) / 100000
+    except (TypeError, ValueError):
+        return 0.0
+
+
+_VML_UNITS = {"in": 1.0, "pt": 1 / 72, "pc": 1 / 6, "cm": 1 / 2.54, "mm": 1 / 25.4, "px": 1 / 96}
+_VML_SIZE = re.compile(r"(?:^|;)\s*(width|height)\s*:\s*([0-9.]+)\s*([a-z]*)", re.IGNORECASE)
+
+
+def _ref_display_size(elem: ET.Element, parents: dict) -> Optional[tuple]:
+    """Розмір (ширина, висота) у дюймах, який має покрити ВСЕ зображення для
+    цього посилання, або None, якщо його не вдалося надійно визначити."""
+    kind = _local(elem.tag)
+    if kind == "blip":  # DrawingML: <wp:inline|anchor><wp:extent/> ... <a:blip r:embed/>
+        crop_w = crop_h = 1.0
+        holder = parents.get(elem)
+        if holder is not None:
+            for ch in holder:
+                name = _local(ch.tag)
+                if name == "tile":
+                    return None  # заливка-плитка: розмір однієї плитки невідомий
+                if name == "srcRect":  # обрізане фото: видно лише частину зображення
+                    crop_w = 1.0 - _crop_fraction(ch.get("l")) - _crop_fraction(ch.get("r"))
+                    crop_h = 1.0 - _crop_fraction(ch.get("t")) - _crop_fraction(ch.get("b"))
+        if crop_w < 0.05 or crop_h < 0.05:
+            return None
+        node = holder
+        while node is not None:
+            if _local(node.tag) in ("inline", "anchor"):
+                for ch in node:
+                    if _local(ch.tag) == "extent":
+                        try:
+                            cx, cy = int(ch.get("cx")), int(ch.get("cy"))
+                        except (TypeError, ValueError):
+                            return None
+                        if cx > 0 and cy > 0:
+                            return (cx / _EMU_PER_INCH / crop_w, cy / _EMU_PER_INCH / crop_h)
+                return None
+            node = parents.get(node)
+        return None
+    if kind == "imagedata":  # VML: <v:shape style="width:..;height:.."><v:imagedata r:id/>
+        if any(_local(k).lower().startswith("crop") for k in elem.attrib):
+            return None
+        shape = parents.get(elem)
+        if shape is None:
+            return None
+        dims = {}
+        for m in _VML_SIZE.finditer(shape.get("style") or ""):
+            unit = _VML_UNITS.get(m.group(3).lower())
+            if unit is None:
+                return None
+            try:
+                dims[m.group(1).lower()] = float(m.group(2)) * unit
+            except ValueError:
+                return None
+        if dims.get("width", 0) > 0 and dims.get("height", 0) > 0:
+            return (dims["width"], dims["height"])
+    return None
+
+
+def _docx_display_sizes(zin: zipfile.ZipFile, names) -> dict:
+    """{ім'я медіафайлу: (ширина, висота) у дюймах} - найбільший розмір, у якому
+    зображення показано в документі. Зображення потрапляє сюди, лише якщо
+    розмір відомий для КОЖНОГО посилання на нього; інакше діє тільки max_side."""
+    sizes: dict = {}
+    unknown: set = set()
+    for rels_name in sorted(names):
+        m = re.match(r"^(.*/)?_rels/([^/]+)\.rels$", rels_name)
+        if not m:
+            continue
+        base = m.group(1) or ""
+        rid_map = {}
+        for rel in _parse_xml(zin.read(rels_name)):
+            if _local(rel.tag) != "Relationship" or (rel.get("TargetMode") or "").lower() == "external":
+                continue
+            target = rel.get("Target") or ""
+            path = target.lstrip("/") if target.startswith("/") else posixpath.normpath(base + target)
+            if path.startswith("word/media/"):
+                rid_map[rel.get("Id")] = path
+        if not rid_map:
+            continue
+        seen = set()
+        try:
+            root = _parse_xml(zin.read(base + m.group(2)))
+            parents = {child: parent for parent in root.iter() for child in parent}
+            for el in root.iter():
+                for key, value in el.attrib.items():
+                    if value in rid_map and "relationships" in key:
+                        seen.add(value)
+                        media = rid_map[value]
+                        size = _ref_display_size(el, parents)
+                        if size is None:
+                            unknown.add(media)
+                        else:
+                            old = sizes.get(media, (0.0, 0.0))
+                            sizes[media] = (max(old[0], size[0]), max(old[1], size[1]))
+        except Exception:
+            LOG.exception("Не вдалося розібрати %s - розміри картинок з нього не враховую", base + m.group(2))
+            unknown.update(rid_map.values())
+            continue
+        unknown.update(media for rid, media in rid_map.items() if rid not in seen)
+    return {media: size for media, size in sizes.items() if media not in unknown}
+
+
+def process_one_docx(
+    src: Path, dst: Path, max_side: int, quality: int, png2jpg: bool, ppi: Optional[int] = None
+) -> dict:
     """Стискає зображення всередині .docx. Результат - новий zip, зібраний
-    запис-за-записом (порядок, дати й стиснення незмінених частин зберігаються)."""
+    запис-за-записом (порядок, дати й стиснення незмінених частин зберігаються).
+
+    ppi - якщо задано, картинка зменшується до цієї щільності відносно того
+    розміру, у якому вона реально стоїть на сторінці (але не більше max_side)."""
     result = {"ok": False, "images": 0, "old": 0, "new": 0}
     tmp: Optional[Path] = None
     in_place = _same_path(src, dst)
@@ -517,6 +641,12 @@ def process_one_docx(src: Path, dst: Path, max_side: int, quality: int, png2jpg:
             replaced: dict[str, bytes] = {}
             renames: dict[str, str] = {}
             taken = set(names)
+            display: dict = {}
+            if ppi:
+                try:
+                    display = _docx_display_sizes(zin, names)
+                except Exception:
+                    LOG.exception("Не вдалося визначити розміри картинок у %s", src)
             for info in infos:
                 name = info.filename
                 if info.is_dir() or not name.startswith("word/media/"):
@@ -528,11 +658,19 @@ def process_one_docx(src: Path, dst: Path, max_side: int, quality: int, png2jpg:
                     raw = zin.read(info)
                     with Image.open(io.BytesIO(raw)) as im:
                         im.load()
-                        enc = encode_image(im, ext, max_side, quality, png2jpg, "orientation")
+                        limit = max_side
+                        shown = display.get(name)
+                        if shown:
+                            w, h = im.size
+                            # беремо більше зі співвідношень - запас на поворот і неточності
+                            scale = max(shown[0] * ppi / w, shown[1] * ppi / h)
+                            if scale < 1:
+                                limit = min(max_side, max(_MIN_SIDE, math.ceil(max(w, h) * scale)))
+                        enc = encode_image(im, ext, limit, quality, png2jpg, "orientation")
                 except Exception:
                     LOG.exception("Пропускаю зображення %s у %s", name, src)
                     continue
-                if enc is None or not (enc.resized or len(enc.data) < len(raw)):
+                if enc is None or len(enc.data) >= len(raw):
                     continue
                 new_name = name
                 if enc.ext != ext:
@@ -613,8 +751,9 @@ def _delete_original(path: Path) -> None:
 class WordConverter:
     """Один екземпляр Word на всю пачку файлів (значно швидше, ніж на кожен файл)."""
 
-    def __init__(self):
+    def __init__(self, modern: bool = False):
         self.word = None
+        self.modern = modern  # True: зберігати без режиму сумісності
         self._com_inited = False
 
     def __enter__(self):
@@ -668,7 +807,7 @@ class WordConverter:
 
     def convert(self, src: Path, dst: Path) -> dict:
         """Конвертує src (.doc) у .docx поруч із dst. Файл з'являється лише після перевірки."""
-        result = {"ok": False, "action": "fail", "old": 0, "new": 0, "out": None, "error": ""}
+        result = {"ok": False, "action": "fail", "old": 0, "new": 0, "out": None, "error": "", "macros": False}
         doc = None
         tmp: Optional[Path] = None
         try:
@@ -688,7 +827,24 @@ class WordConverter:
                 PasswordDocument="\u0001no-password\u0001",  # захищений файл -> помилка, а не діалог
                 WritePasswordDocument="\u0001no-password\u0001",
             )
-            doc.SaveAs(FileName=str(tmp.resolve()), FileFormat=16)
+            try:  # у .docx макроси не зберігаються - про це треба сказати користувачу
+                result["macros"] = bool(doc.HasVBProject)
+            except Exception:
+                pass
+            saved = False
+            if self.modern:
+                try:
+                    doc.SaveAs2(
+                        FileName=str(tmp.resolve()),
+                        FileFormat=WD_FORMAT_DOCX,
+                        CompatibilityMode=WD_COMPAT_CURRENT,
+                    )
+                    saved = True
+                except Exception:
+                    LOG.warning("SaveAs2 без режиму сумісності не спрацював для %s - зберігаю звичайним способом", src)
+                    _remove_quiet(tmp)
+            if not saved:
+                doc.SaveAs(FileName=str(tmp.resolve()), FileFormat=WD_FORMAT_DOCX)
             doc.Close(SaveChanges=False)
             doc = None
             if not tmp.exists() or tmp.stat().st_size <= 0 or not is_valid_docx_deep(tmp):
@@ -1091,6 +1247,7 @@ class JobConfig:
     backup: bool = True
     dry_run: bool = True
     delete_doc: bool = False
+    modern_format: bool = False
     template: str = "IMG_{n:04d}"
     start_num: int = 1
     sort: str = SORT_OPTIONS[0]
@@ -1145,7 +1302,12 @@ def run_job(
                 break
             progress(i, total, src.name[:50])
             r = process_one_docx(
-                src, out_root / src.relative_to(src_root), lv["max_side"], lv["quality"], lv["png2jpg"]
+                src,
+                out_root / src.relative_to(src_root),
+                lv["max_side"],
+                lv["quality"],
+                lv["png2jpg"],
+                lv.get("ppi"),
             )
             done += 1
             old_sum += r["old"]
@@ -1173,9 +1335,11 @@ def run_job(
         total = len(files)
         ok = fail = deleted = done = exists = 0
         err_files: list[str] = []
+        macro_files: list[str] = []
         try:
             ctx = converter_factory()
             conv = ctx.__enter__()
+            conv.modern = cfg.modern_format
         except Exception as e:
             LOG.exception("Не вдалося запустити Word")
             return (
@@ -1195,7 +1359,9 @@ def run_job(
                 r = conv.convert(src, dst)
                 if r["ok"]:
                     ok += 1
-                    if cfg.delete_doc and r["out"] is not None and r["new"] > 10:
+                    if r.get("macros"):
+                        macro_files.append(src.name)  # оригінал з макросами не видаляємо
+                    elif cfg.delete_doc and r["out"] is not None and r["new"] > 10:
                         try:
                             if is_valid_docx_deep(r["out"]):
                                 _delete_original(src)
@@ -1213,6 +1379,11 @@ def run_job(
         if cfg.delete_doc and deleted > 0:
             where = "у кошик" if _send2trash is not None else "назавжди"
             msg += f"\nВидалено оригіналів .doc ({where}): {deleted}"
+        if macro_files:
+            msg += (
+                f"\n\nМістили макроси: {len(macro_files)}. У .docx макросів немає,"
+                " тому оригінали .doc цих файлів збережено:\n" + "\n".join(macro_files[:5])
+            )
         if fail > 0:
             msg += "\n\nНе вдалося конвертувати:\n" + "\n".join(err_files[:5])
         if done < total:
@@ -1257,7 +1428,7 @@ def run_job(
         if old_sum > 0:
             msg += f"\nЗменшення: {(1 - new_sum / old_sum) * 100:.1f}%"
         if skipped:
-            msg += f"\nБез змін (анімація або непідтримуваний режим): {skipped}"
+            msg += f"\nБез змін (анімація, CMYK або 16-бітні): {skipped}"
         if err:
             msg += f"\nПомилок: {err}\nНе вдалося обробити:\n" + "\n".join(err_files[:5])
         if done < total:

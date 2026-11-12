@@ -1,0 +1,3 @@
+# .bat мають зберігати закінчення рядків Windows у будь-якому вигляді (clone, ZIP)
+*.bat -text
+*.ico binary

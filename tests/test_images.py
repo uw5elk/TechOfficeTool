@@ -235,3 +235,26 @@ def test_truncated_jpeg_is_reported_and_left_untouched(tmp_path, noise):
     r = c.compress_file(p, p, 1000, 80, True)
     assert r["ok"] is False
     assert p.read_bytes() == before
+
+
+def test_file_never_grows_even_when_dimensions_would_shrink(tmp_path):
+    """Регресія: зменшене зображення записувалось, навіть якщо ставало БІЛЬШИМ за оригінал."""
+    p = tmp_path / "pattern.png"
+    side = 2400
+    row_a, row_b = bytes([0, 255] * (side // 2)), bytes([255, 0] * (side // 2))
+    # шахівниця з клітинкою 1 px: у PNG займає кілька кілобайт, а після зменшення
+    # перетворюється на "кашу", яка в JPEG важить у рази більше
+    Image.frombytes("L", (side, side), (row_a + row_b) * (side // 2)).save(p, optimize=True)
+    before = p.read_bytes()
+    r = c.compress_file(p, p, 1600, 82, True)
+    assert r["ok"] and r["status"] == "kept", r
+    assert p.read_bytes() == before
+
+
+def test_cmyk_jpeg_is_left_untouched(tmp_path, noise):
+    p = tmp_path / "print.jpg"
+    noise((1800, 1200)).convert("CMYK").save(p, quality=95)
+    before = p.read_bytes()
+    r = c.compress_file(p, p, 1000, 75, True)
+    assert r["ok"] and r["status"] == "skipped"
+    assert p.read_bytes() == before
