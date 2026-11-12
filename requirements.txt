@@ -1,0 +1,3 @@
+pillow>=9.4
+pywin32>=306; sys_platform == "win32"
+send2trash>=1.8

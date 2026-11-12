@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+
+  # Збирає TechOfficeTool.exe і додає його до релізу, коли ставите тег на кшталт v1.0.0
+  build-exe:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements.txt pyinstaller
+      - run: >
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name TechOfficeTool --icon icon.ico
+          --hidden-import techoffice_core
+          --hidden-import win32api --hidden-import pywintypes --hidden-import pythoncom
+          --hidden-import win32com --hidden-import win32com.client
+          --collect-submodules win32com --collect-submodules send2trash
+          DocxImageCompressor.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/TechOfficeTool.exe
