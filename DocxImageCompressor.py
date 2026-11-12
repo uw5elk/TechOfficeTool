@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """TechOfficeTool - графічний інтерфейс. Уся логіка живе в techoffice_core.py."""
 import queue
+import re
 import sys
 import threading
 from pathlib import Path
@@ -37,11 +38,24 @@ from techoffice_core import (
 )
 
 
+def _resource(name: str) -> Path:
+    """Шлях до файлу поруч із програмою (у зібраному exe - у тимчасовій папці PyInstaller)."""
+    return Path(getattr(sys, "_MEIPASS", None) or Path(__file__).resolve().parent) / name
+
+
+# "Помилок: 0" - не помилка; підказку про журнал показуємо лише при реальних збоях
+_HAS_ERRORS = re.compile(r"Помилок: [1-9]|Не вдалося|Сталася помилка")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         core.setup_logging()
         self.title("TechOfficeTool | UW5ELK")
+        try:
+            self.iconbitmap(default=str(_resource("icon.ico")))
+        except Exception:
+            pass  # без іконки програма теж працює
         self.minsize(680, 400)
         self.configure(bg="#2d2d2d")
         style = ttk.Style(self)
@@ -53,11 +67,10 @@ class App(tk.Tk):
         style.configure("TProgressbar", background="#4a90e2", troughcolor="#3c3c3c", bordercolor="#3c3c3c")
         style.configure("TEntry", fieldbackground="white", foreground="black")
         style.configure("TCombobox", fieldbackground="white", foreground="black", background="white", arrowcolor="black")
-        style.map("TCombobox", fieldbackground=[("readonly", "white")], foreground=[("readonly", "black")], selectbackground=[("readonly", "white")], selectforeground=[("readonly", "black")])
         style.configure("TSpinbox", fieldbackground="white", foreground="black", arrowcolor="black", background="white")
         # Тема "clam" за замовчуванням підсвічує елементи світло-сірим при наведенні й
         # у вимкненому стані, а текст лишається білим - тому він зливався з фоном.
-        BG, BTN, BTN_HOVER, BTN_PRESSED, BTN_OFF, TXT_OFF = "#2d2d2d", "#555555", "#6e6e6e", "#444444", "#3a3a3a", "#8a8a8a"
+        BG, BTN_HOVER, BTN_PRESSED, BTN_OFF, TXT_OFF = "#2d2d2d", "#6e6e6e", "#444444", "#3a3a3a", "#8a8a8a"
         style.map(
             "TButton",
             background=[("disabled", BTN_OFF), ("pressed", BTN_PRESSED), ("active", BTN_HOVER)],
@@ -80,6 +93,8 @@ class App(tk.Tk):
             "TCombobox",
             fieldbackground=[("disabled", "#4a4a4a"), ("readonly", "white")],
             foreground=[("disabled", "#bbbbbb"), ("readonly", "black")],
+            selectbackground=[("readonly", "white")],
+            selectforeground=[("readonly", "black")],
             background=[("active", "#dddddd"), ("!active", "white")],
         )
         style.map(
@@ -254,7 +269,11 @@ class App(tk.Tk):
                 if not out:
                     messagebox.showerror("Помилка", "Оберіть вихідну папку.")
                     return
-                Path(out).mkdir(parents=True, exist_ok=True)
+                try:
+                    Path(out).mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    messagebox.showerror("Помилка", "Не вдалося створити вихідну папку:\n%s" % e)
+                    return
         else:
             out = inp
         if mode == MODE_CONVERT and not WIN32_OK:
@@ -278,7 +297,7 @@ class App(tk.Tk):
             ):
                 return
         # попередження перед незворотними діями
-        if mode in (MODE_DOCX, MODE_IMAGES) and out == inp:
+        if mode in (MODE_DOCX, MODE_IMAGES) and core._same_path(out, inp):
             if not messagebox.askyesno("Підтвердження", "Файли буде замінено на місці (оригінали не збережуться).\nПродовжити?"):
                 return
         if mode == MODE_EXIF and not self.backup_var.get():
@@ -361,7 +380,7 @@ class App(tk.Tk):
         self.cancel_btn.configure(state="disabled")
         self.status.configure(text="Завершено")
         self.detail.configure(text="")
-        if core.LOG_PATH and ("Помил" in msg or "помил" in msg):
+        if core.LOG_PATH and _HAS_ERRORS.search(msg) and str(core.LOG_PATH) not in msg:
             msg += "\n\nЖурнал: %s" % core.LOG_PATH
         messagebox.showinfo("Результат", msg)
 

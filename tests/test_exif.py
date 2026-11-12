@@ -1,5 +1,3 @@
-import io
-
 from PIL import Image, ImageCms
 from PIL.PngImagePlugin import PngInfo
 

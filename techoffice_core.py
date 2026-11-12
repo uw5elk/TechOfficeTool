@@ -25,9 +25,10 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
-from PIL import Image, ImageFile, ImageOps
+from PIL import Image, ImageOps
 
-ImageFile.LOAD_TRUNCATED_IMAGES = True
+# LOAD_TRUNCATED_IMAGES свідомо НЕ вмикаємо: інакше пошкоджене (обрізане) фото
+# "домальовувалось" би сірим і цей результат назавжди замінив би оригінал.
 
 try:  # Word-конвертація доступна лише у Windows з встановленим pywin32
     import pythoncom
@@ -154,6 +155,32 @@ def _unique_path(p: Path) -> Path:
         if not cand.exists():
             return cand
         k += 1
+
+
+class OutputNames:
+    """Стежить, щоб два файли одного запуску не записались під одним ім'ям
+    (напр. a.bmp і a.jpg - обидва стали б a.jpg).
+
+    primary - "рідні" імена всіх файлів запуску (без зміни розширення);
+    чужий файл не може зайняти рідне ім'я іншого.
+    """
+
+    def __init__(self, primary=()):
+        self.primary = {_norm(p) for p in primary}
+        self.used: set = set()
+
+    def claim(self, p: Path, own: bool, avoid_existing: bool) -> Path:
+        cand, k = p, 1
+        while (
+            _norm(cand) in self.used
+            or (not own and _norm(cand) in self.primary)
+            or (avoid_existing and cand.exists())
+        ):
+            cand = p.with_name(f"{p.stem}_{k}{p.suffix}")
+            k += 1
+            own = False  # змінене ім'я вже не "рідне"
+        self.used.add(_norm(cand))
+        return cand
 
 
 def _remove_quiet(p: Optional[Path]) -> None:
@@ -324,14 +351,26 @@ def compress_file(
     quality: int,
     png2jpg: bool,
     exif_mode: str = "keep",
+    names: Optional[OutputNames] = None,
 ) -> dict:
     """Стискає одне зображення. dst може збігатися з src (стиснення "на місці").
 
     Файл-результат з'являється атомарно. Якщо результат не менший за оригінал
     (і не було зменшення розмірів) - лишається оригінал.
+    names - спільний облік імен для всього запуску (див. OutputNames).
     """
     res = {"ok": False, "status": "failed", "old": 0, "new": 0, "path": dst}
     in_place = _same_path(src, dst)
+    names = names or OutputNames([dst])
+
+    def copy_original():
+        # у вихідну папку кладемо незмінену копію (у т.ч. поверх старого результату)
+        out = names.claim(dst, own=True, avoid_existing=False)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, out)
+        res["path"] = out
+        return out
+
     try:
         st = src.stat()
         res["old"] = st.st_size
@@ -345,9 +384,7 @@ def compress_file(
         except Exception:
             LOG.exception("Не вдалося обробити зображення %s", src)
             if not in_place:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                res["new"] = dst.stat().st_size
+                res["new"] = copy_original().stat().st_size
             else:
                 res["new"] = res["old"]
             return res
@@ -359,14 +396,20 @@ def compress_file(
 
         if not use_new:
             if not in_place:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
+                copy_original()
             res.update(ok=True, status="skipped" if enc is None else "kept", new=res["old"])
             return res
 
-        final = dst if enc.ext == ext else dst.with_suffix(enc.ext)
-        if enc.ext != ext and final.exists():
-            final = _unique_path(final)  # не затираємо чужі файли
+        same_ext = enc.ext == ext
+        if in_place and same_ext:
+            final = dst
+            names.used.add(_norm(dst))
+        else:
+            # на місці - не затираємо жодних наявних файлів;
+            # у вихідній папці - старий результат попереднього запуску перезаписується
+            final = names.claim(
+                dst if same_ext else dst.with_suffix(enc.ext), own=same_ext, avoid_existing=in_place
+            )
         final.parent.mkdir(parents=True, exist_ok=True)
         tmp = _tmp_path(final)
         try:
@@ -387,9 +430,15 @@ def compress_file(
 
 
 def process_one_image(
-    src: Path, dst: Path, max_side: int, quality: int, png2jpg: bool, keep_exif: bool
+    src: Path,
+    dst: Path,
+    max_side: int,
+    quality: int,
+    png2jpg: bool,
+    keep_exif: bool,
+    names: Optional[OutputNames] = None,
 ) -> dict:
-    r = compress_file(src, dst, max_side, quality, png2jpg, "keep" if keep_exif else "strip")
+    r = compress_file(src, dst, max_side, quality, png2jpg, "keep" if keep_exif else "strip", names)
     return {"ok": r["ok"], "old": r["old"], "new": r["new"], "status": r["status"]}
 
 
@@ -569,10 +618,14 @@ class WordConverter:
         self._com_inited = False
 
     def __enter__(self):
-        self._start()
+        try:
+            self._start()
+        except Exception:
+            self.close()
+            raise
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *_exc):
         self.close()
         return False
 
@@ -733,9 +786,6 @@ def format_name(template: str, n: int, src: Path) -> str:
     return name or f"{src.stem}_{n}"
 
 
-_format_name = format_name  # зворотна сумісність
-
-
 def plan_renames(files, template: str, start: int, sort_mode: str) -> list:
     files = list(files)
     if sort_mode == "За іменем":
@@ -807,7 +857,7 @@ def _rename_many(pairs, cancel=None, progress=None):
         for i, (s, d) in enumerate(pairs, 1):
             if progress:
                 progress(i, total, s.name)
-            t = s.with_name(f".{uuid.uuid4().hex[:10]}.tot_tmp")
+            t = s.with_name(f".{s.name}.{uuid.uuid4().hex[:8]}.tot_tmp")
             _rename_one(s, t)
             staged.append((s, t, d))
     except Exception as e:
@@ -1121,19 +1171,28 @@ def run_job(
         if not files:
             return "У папці не знайдено файлів .doc для конвертації."
         total = len(files)
-        ok = fail = deleted = done = 0
+        ok = fail = deleted = done = exists = 0
         err_files: list[str] = []
-        with converter_factory() as conv:
+        try:
+            ctx = converter_factory()
+            conv = ctx.__enter__()
+        except Exception as e:
+            LOG.exception("Не вдалося запустити Word")
+            return (
+                "Не вдалося запустити Microsoft Word.\n"
+                f"Перевірте, що Word встановлено й активовано.\n\n({type(e).__name__}: {e})"
+            )
+        try:
             for i, src in enumerate(files, 1):
                 if _cancelled(cancel):
                     break
                 progress(i, total, src.name[:50])
-                try:
-                    dst = out_root / src.relative_to(src_root)
-                except ValueError:
-                    dst = out_root / src.name
-                r = conv.convert(src, dst)
+                dst = out_root / src.relative_to(src_root)
                 done += 1
+                if dst.with_suffix(".docx").exists():
+                    exists += 1  # вже конвертовано раніше - не дублюємо і не перезаписуємо
+                    continue
+                r = conv.convert(src, dst)
                 if r["ok"]:
                     ok += 1
                     if cfg.delete_doc and r["out"] is not None and r["new"] > 10:
@@ -1146,7 +1205,11 @@ def run_job(
                 else:
                     fail += 1
                     err_files.append(f"{src.name} ({r['error'][:80]})" if r["error"] else src.name)
+        finally:
+            ctx.__exit__(None, None, None)
         msg = f"Готово! Конвертовано: {ok}, Помилок: {fail}"
+        if exists:
+            msg += f"\nПропущено (поруч уже є .docx): {exists}"
         if cfg.delete_doc and deleted > 0:
             where = "у кошик" if _send2trash is not None else "назавжди"
             msg += f"\nВидалено оригіналів .doc ({where}): {deleted}"
@@ -1166,6 +1229,7 @@ def run_job(
         total = len(files)
         old_sum = new_sum = ok = err = skipped = done = 0
         err_files = []
+        names = OutputNames(out_root / f.relative_to(src_root) for f in files)
         for i, src in enumerate(files, 1):
             if _cancelled(cancel):
                 break
@@ -1177,6 +1241,7 @@ def run_job(
                 lv["quality"],
                 lv["png2jpg"],
                 cfg.keep_exif,
+                names,
             )
             done += 1
             if r["ok"]:

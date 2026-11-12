@@ -11,6 +11,7 @@ if errorlevel 1 (
 python -m pip install -r requirements.txt
 python -m pip install pyinstaller
 python -m PyInstaller --noconfirm --clean --onefile --console --name "TechOfficeTool_debug" --icon="icon.ico" ^
+    --add-data "icon.ico;." ^
     --hidden-import techoffice_core ^
     --hidden-import win32api ^
     --hidden-import pywintypes ^

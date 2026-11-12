@@ -7,7 +7,6 @@
 """
 import importlib
 import sys
-import threading
 import types
 from pathlib import Path
 
@@ -331,3 +330,46 @@ def test_progress_message_during_scan_does_not_break_progressbar(gui):
     app._upd(0, 0, "Пошук файлів… переглянуто 400")
     assert app.status.opts["text"] == "Пошук файлів…"
     assert "400" in app.detail.opts["text"]
+
+
+def test_log_hint_only_when_there_are_real_errors(gui, monkeypatch, tmp_path):
+    mod, box = gui
+    monkeypatch.setattr(mod.core, "LOG_PATH", tmp_path / "TechOfficeTool.log")
+    app = mod.App()
+    app._done("Очищено: 3\nПомилок: 0")
+    assert "Журнал" not in messages(box, "showinfo")[-1]
+    app._done("Готово! Конвертовано: 1, Помилок: 2")
+    assert "Журнал" in messages(box, "showinfo")[-1]
+    app._done("Сталася помилка: X\nДеталі у журналі:\n%s" % mod.core.LOG_PATH)
+    assert messages(box, "showinfo")[-1].count(str(mod.core.LOG_PATH)) == 1  # без дубля
+
+
+def test_same_folder_typed_differently_still_asks_for_confirmation(gui, tmp_path):
+    mod, box = gui
+    Image.new("RGB", (10, 10)).save(tmp_path / "a.png")
+    app = mod.App()
+    app.mode_var.set(mod.MODE_IMAGES)
+    app.input_var.set(str(tmp_path))
+    app.output_var.set(str(tmp_path) + "/")  # та сама папка, інший запис
+    box.answers["askyesno"] = False
+    app.start()
+    assert not app.running and any("на місці" in c[1][1] for c in box.calls if c[0] == "askyesno")
+
+
+def test_bad_output_folder_shows_error_instead_of_silent_failure(gui, tmp_path):
+    mod, box = gui
+    blocker = tmp_path / "file.txt"
+    blocker.write_text("x")
+    app = mod.App()
+    app.mode_var.set(mod.MODE_IMAGES)
+    app.input_var.set(str(tmp_path))
+    app.output_var.set(str(blocker / "out"))  # не можна створити папку всередині файлу
+    app.start()
+    assert not app.running
+    assert any("вихідну папку" in m for m in messages(box, "showerror"))
+
+
+def test_resource_path_points_next_to_program(gui):
+    mod, box = gui
+    assert mod._resource("icon.ico").name == "icon.ico"
+    assert mod._resource("icon.ico").exists()

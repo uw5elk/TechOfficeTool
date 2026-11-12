@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 from PIL import Image, ImageCms
 
@@ -180,3 +179,59 @@ def test_process_one_image_wrapper(tmp_path, noise):
     noise().save(p)
     r = c.process_one_image(p, p, 1600, 82, True, True)
     assert r["ok"] and r["new"] < r["old"]
+
+
+def _run_images(src, out, recursive=False):
+    lv = c.LEVELS["Для екрану (≈150 ppi)"]
+    return c.run_job(c.JobConfig(mode=c.MODE_IMAGES, input_dir=src, output_dir=out, level=lv, recursive=recursive))
+
+
+def test_same_stem_different_formats_do_not_overwrite_each_other_in_output(tmp_path, noise):
+    """Регресія: a.bmp -> out/a.jpg, потім a.jpg -> out/a.jpg затирав результат."""
+    src, out = tmp_path / "in", tmp_path / "out"
+    src.mkdir()
+    noise((900, 600)).save(src / "a.bmp")
+    noise((900, 600)).save(src / "a.jpg", quality=100)
+    noise((900, 600)).save(src / "a.gif")
+    msg = _run_images(src, out)
+    assert "Оброблено: 3/3" in msg
+    produced = sorted(p.name for p in out.iterdir())
+    assert len(produced) == 3, produced
+    assert "a.jpg" in produced  # "рідне" ім'я лишилось за справжнім a.jpg
+    sizes = {p.stat().st_size for p in out.iterdir()}
+    assert len(sizes) == 3  # три різні файли, а не копії одного
+
+
+def test_rerun_to_same_output_folder_does_not_create_duplicates(tmp_path, noise):
+    src, out = tmp_path / "in", tmp_path / "out"
+    src.mkdir()
+    noise().save(src / "a.png")
+    noise().save(src / "b.bmp")
+    _run_images(src, out)
+    first = sorted(p.name for p in out.iterdir())
+    _run_images(src, out)
+    assert sorted(p.name for p in out.iterdir()) == first == ["a.jpg", "b.jpg"]
+
+
+def test_in_place_conversion_still_never_overwrites_real_files(tmp_path):
+    Image.new("RGB", (900, 600), (220, 20, 20)).save(tmp_path / "a.bmp")  # червоний
+    Image.new("RGB", (900, 600), (20, 20, 220)).save(tmp_path / "a.jpg", quality=100)  # синій
+    _run_images(tmp_path, tmp_path)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.jpg", "a_1.jpg"]
+
+    def colour(name):
+        with Image.open(tmp_path / name) as im:
+            return im.convert("RGB").getpixel((450, 300))
+
+    assert colour("a.jpg")[2] > 150  # справжній a.jpg (синій) лишився під своїм ім'ям
+    assert colour("a_1.jpg")[0] > 150  # колишній a.bmp (червоний) отримав нове ім'я
+
+
+def test_truncated_jpeg_is_reported_and_left_untouched(tmp_path, noise):
+    p = tmp_path / "cut.jpg"
+    noise((1800, 1200)).save(p, quality=95)
+    p.write_bytes(p.read_bytes()[: p.stat().st_size // 2])  # обрізаний файл
+    before = p.read_bytes()
+    r = c.compress_file(p, p, 1000, 80, True)
+    assert r["ok"] is False
+    assert p.read_bytes() == before

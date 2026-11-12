@@ -213,9 +213,10 @@ def test_run_job_recursive_flag_and_output_folder(tmp_path):
     out = tmp_path / "out"
     c.run_job(cfg(tmp_path, out=out, recursive=True), converter_factory=Factory())
     assert (out / "top.docx").exists() and (out / "sub" / "deep.docx").exists()
-    # другий прогін не підхоплює власні результати
+    # другий прогін: вже сконвертоване пропускається, дублікатів x_1.docx немає
     msg = c.run_job(cfg(tmp_path, out=out, recursive=True), converter_factory=Factory())
-    assert "Конвертовано: 2" in msg
+    assert "Конвертовано: 0" in msg and "Пропущено (поруч уже є .docx): 2" in msg
+    assert sorted(p.name for p in out.rglob("*.docx")) == ["deep.docx", "top.docx"]
 
 
 def test_run_job_non_recursive_ignores_subfolders(tmp_path):
@@ -247,3 +248,41 @@ def test_run_job_without_pywin32_gives_clear_message(tmp_path, monkeypatch):
 
 def test_no_docs_message(tmp_path):
     assert "не знайдено" in c.run_job(cfg(tmp_path), converter_factory=Factory())
+
+
+def test_run_job_skips_doc_when_docx_exists_and_never_deletes_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, "_send2trash", None)
+    make_doc(tmp_path / "a.doc")
+    (tmp_path / "a.docx").write_bytes(b"user edited version")
+    msg = c.run_job(cfg(tmp_path, delete_doc=True), converter_factory=Factory())
+    assert "Пропущено (поруч уже є .docx): 1" in msg
+    assert (tmp_path / "a.docx").read_bytes() == b"user edited version"
+    assert (tmp_path / "a.doc").exists()  # пропущений оригінал не видаляється
+    assert not (tmp_path / "a_1.docx").exists()
+
+
+def test_run_job_word_cannot_start_gives_clear_message(tmp_path):
+    make_doc(tmp_path / "a.doc")
+
+    def broken_factory():
+        raise RuntimeError("Invalid class string")
+
+    msg = c.run_job(cfg(tmp_path), converter_factory=broken_factory)
+    assert "Не вдалося запустити Microsoft Word" in msg and "Invalid class string" in msg
+    assert (tmp_path / "a.doc").read_bytes() == b"legacy"
+
+
+def test_word_converter_cleans_up_com_when_start_fails(monkeypatch):
+    conv = c.WordConverter()
+    closed = []
+
+    def bad_start():
+        conv._com_inited = True
+        raise RuntimeError("no Word")
+
+    monkeypatch.setattr(conv, "_start", bad_start)
+    monkeypatch.setattr(conv, "close", lambda: closed.append(1))
+    with pytest.raises(RuntimeError):
+        with conv:
+            pass
+    assert closed == [1]

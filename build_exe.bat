@@ -19,6 +19,7 @@ echo [2/3] Installing pyinstaller...
 python -m pip install pyinstaller
 echo [3/3] Building EXE...
 python -m PyInstaller --noconfirm --clean --onefile --windowed --name "TechOfficeTool" --icon="icon.ico" ^
+    --add-data "icon.ico;." ^
     --hidden-import techoffice_core ^
     --hidden-import win32api ^
     --hidden-import pywintypes ^
