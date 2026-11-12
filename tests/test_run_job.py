@@ -102,12 +102,8 @@ def test_rename_dry_run_changes_nothing_then_real(tmp_path):
     assert "a.jpg → IMG_0001.jpg" in msg
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.jpg", "b.jpg"]
     msg = c.run_job(cfg(c.MODE_RENAME, tmp_path, dry_run=False))
-    assert "Перейменовано: 2" in msg and "Журнал для відміни" in msg
-    logs = list(tmp_path.glob(".rename_log_*.json"))
-    assert len(logs) == 1
-    restored, skipped, errs = c.undo_rename(logs[0])
-    assert restored == 2
-    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".jpg") == ["a.jpg", "b.jpg"]
+    assert "Перейменовано: 2" in msg and "Журнал" not in msg
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["IMG_0001.jpg", "IMG_0002.jpg"]  # і жодних службових файлів
 
 
 def test_rename_invalid_template_is_reported_not_crashed(tmp_path):
@@ -153,3 +149,28 @@ def test_progress_callback_receives_totals(tmp_path, noise):
 
 def test_unknown_mode():
     assert "Невідомий режим" in c.run_job(c.JobConfig(mode="x", input_dir=".", output_dir="."))
+
+
+def test_cancel_during_file_search_stops_scan(tmp_path):
+    """Регресія: «Скасувати» не зупиняло пошук файлів (напр. по всьому диску)."""
+    for i in range(1000):
+        (tmp_path / f"f{i}.txt").write_text("x")
+    ev = threading.Event()
+    ev.set()  # скасовано ще до початку
+    found = c._find_files(tmp_path, True, c.IMG_EXTS, cancel=ev)
+    assert found == []  # перервано на першій же перевірці (кожні 200 елементів)
+    for mode in (c.MODE_RENAME, c.MODE_EXIF, c.MODE_IMAGES, c.MODE_DOCX, c.MODE_CONVERT):
+        msg = c.run_job(
+            cfg(mode, tmp_path, level=level(), recursive=True),
+            cancel=ev,
+            converter_factory=lambda: None,
+        )
+        assert "під час пошуку" in msg or "pywin32" in msg, (mode, msg)
+
+
+def test_scan_reports_progress_with_zero_total(tmp_path):
+    for i in range(450):
+        (tmp_path / f"f{i}.txt").write_text("x")
+    seen = []
+    c.run_job(cfg(c.MODE_EXIF, tmp_path, recursive=True), progress=lambda i, t, n: seen.append((i, t, n)))
+    assert seen and all(i == 0 and t == 0 and "Пошук" in n for i, t, n in seen)

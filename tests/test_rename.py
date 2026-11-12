@@ -101,38 +101,6 @@ def test_start_number_and_recursive_numbering(tmp_path):
     assert names(tmp_path / "s2") == ["IMG_0011.jpg"]
 
 
-def test_log_and_undo_roundtrip(tmp_path):
-    mk(tmp_path, "b.jpg", "a.jpg")
-    original = names(tmp_path)
-    planned, done, errors = run_rename(tmp_path)
-    log = c.write_rename_log(tmp_path, done)
-    assert log and log.name.startswith(".rename_log_") and log.suffix == ".json"
-    data = json.loads(log.read_text(encoding="utf-8"))
-    assert len(data["renames"]) == 2
-    restored, skipped, errs = c.undo_rename(log)
-    assert (restored, skipped, errs) == (2, 0, [])
-    assert names(tmp_path) == original
-
-
-def test_undo_of_chain_rename(tmp_path):
-    mk(tmp_path, "IMG_0002.jpg", "x.jpg", "y.jpg")
-    original = names(tmp_path)
-    planned, done, errors = run_rename(tmp_path)
-    log = c.write_rename_log(tmp_path, done)
-    restored, skipped, errs = c.undo_rename(log)
-    assert not errs and restored == len(done)
-    assert names(tmp_path) == original
-
-
-def test_undo_skips_files_that_were_moved_away(tmp_path):
-    mk(tmp_path, "a.jpg", "b.jpg")
-    planned, done, errors = run_rename(tmp_path)
-    log = c.write_rename_log(tmp_path, done)
-    (tmp_path / "IMG_0001.jpg").unlink()
-    restored, skipped, errs = c.undo_rename(log)
-    assert restored == 1 and skipped == 1 and not errs
-
-
 def test_rename_never_overwrites_existing_target(tmp_path):
     a, b = mk(tmp_path, "a.jpg", "b.jpg")
     b.write_bytes(b"other")

@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import io
-import json
 import logging
 import logging.handlers
 import os
@@ -174,11 +173,30 @@ def _copy_times(st: os.stat_result, dst: Path) -> None:
         pass
 
 
-def _find_files(root: Path, recursive: bool, exts, exclude: Optional[Path] = None) -> list[Path]:
+def _find_files(
+    root: Path,
+    recursive: bool,
+    exts,
+    exclude: Optional[Path] = None,
+    cancel=None,
+    on_scan: Optional[Callable[[int], None]] = None,
+) -> list[Path]:
+    """Шукає файли. Пошук можна скасувати (cancel) - на великих дисках він
+    може тривати довго, тому подію перевіряємо під час обходу, а не після."""
     it = root.rglob("*") if recursive else root.glob("*")
     out = []
+    seen = 0
     for f in it:
-        if not f.is_file() or f.name.startswith("~$"):
+        seen += 1
+        if seen % 200 == 0:
+            if cancel is not None and cancel.is_set():
+                break
+            if on_scan is not None:
+                on_scan(seen)
+        try:
+            if not f.is_file() or f.name.startswith("~$"):
+                continue
+        except OSError:
             continue
         if f.suffix.lower() not in exts:
             continue
@@ -815,38 +833,6 @@ def _rename_many(pairs, cancel=None, progress=None):
     return done, errors
 
 
-def write_rename_log(folder: Path, done) -> Optional[Path]:
-    if not done:
-        return None
-    try:
-        path = folder / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json"
-        payload = {
-            "version": 1,
-            "created": datetime.now().isoformat(timespec="seconds"),
-            "renames": [{"old": str(s), "new": str(d)} for s, d in done],
-        }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        return path
-    except Exception:
-        LOG.exception("Не вдалося записати журнал перейменування")
-        return None
-
-
-def undo_rename(log_path: Path):
-    """Повертає старі імена за журналом. Результат: (відновлено, пропущено, помилки)."""
-    data = json.loads(Path(log_path).read_text(encoding="utf-8"))
-    pairs = [(Path(e["new"]), Path(e["old"])) for e in data.get("renames", [])]
-    src_keys = {_norm(s) for s, _ in pairs}
-    todo, skipped = [], 0
-    for s, d in pairs:
-        if not s.exists() or (d.exists() and _norm(d) not in src_keys):
-            skipped += 1
-        else:
-            todo.append((s, d))
-    done, errors = _rename_many(todo)
-    return len(done), skipped, errors
-
-
 # --------------------------------------------------------------------------- #
 # Видалення EXIF
 # --------------------------------------------------------------------------- #
@@ -1079,13 +1065,26 @@ def run_job(
     src_root, out_root = Path(cfg.input_dir), Path(cfg.output_dir)
     exclude = None if _same_path(src_root, out_root) else out_root
     suffix = "\n\nСкасовано користувачем - оброблено {i} з {t}."
+    cancelled_scan = "Скасовано користувачем під час пошуку файлів."
+
+    def find(recursive, exts, excl=None):
+        return _find_files(
+            src_root,
+            recursive,
+            exts,
+            excl,
+            cancel,
+            lambda n: progress(0, 0, f"Пошук файлів… переглянуто {n}"),
+        )
 
     if cfg.mode == MODE_DOCX:
         files = [
             f
-            for f in _find_files(src_root, True, {".docx"}, exclude)
+            for f in find(True, {".docx"}, exclude)
             if not f.name.endswith(".tmp_c.docx") and is_valid_docx(f)
         ]
+        if _cancelled(cancel):
+            return cancelled_scan
         if not files:
             return "Не знайдено .docx"
         lv = cfg.level
@@ -1116,7 +1115,9 @@ def run_job(
     if cfg.mode == MODE_CONVERT:
         if converter_factory is WordConverter and not WIN32_OK:
             return "Для конвертації потрібен pywin32."
-        files = _find_files(src_root, cfg.recursive, {".doc"}, exclude)
+        files = find(cfg.recursive, {".doc"}, exclude)
+        if _cancelled(cancel):
+            return cancelled_scan
         if not files:
             return "У папці не знайдено файлів .doc для конвертації."
         total = len(files)
@@ -1156,7 +1157,9 @@ def run_job(
         return msg
 
     if cfg.mode == MODE_IMAGES:
-        files = _find_files(src_root, cfg.recursive, IMG_EXTS, exclude)
+        files = find(cfg.recursive, IMG_EXTS, exclude)
+        if _cancelled(cancel):
+            return cancelled_scan
         if not files:
             return "Немає зображень"
         lv = cfg.level
@@ -1201,7 +1204,9 @@ def run_job(
         bad = validate_template(tmpl)
         if bad:
             return bad
-        files = _find_files(src_root, cfg.recursive, IMG_EXTS)
+        files = find(cfg.recursive, IMG_EXTS)
+        if _cancelled(cancel):
+            return cancelled_scan
         if not files:
             return "У вибраній папці не знайдено зображень для перейменування."
         planned = plan_renames(files, tmpl, cfg.start_num, cfg.sort)
@@ -1213,16 +1218,15 @@ def run_job(
                 lines.append(f"... ще {len(planned) - 50}")
             return "\n".join(lines)
         done_pairs, errors = _rename_many(planned, cancel, progress)
-        log_path = write_rename_log(src_root, done_pairs)
         msg = f"Перейменовано: {len(done_pairs)}\nПомилок: {len(errors)}"
         if errors:
             msg += "\n\nДеталі помилок:\n" + "\n".join(errors[:3])
-        if log_path:
-            msg += f"\n\nЖурнал для відміни: {log_path.name}"
         return msg
 
     if cfg.mode == MODE_EXIF:
-        files = _find_files(src_root, cfg.recursive, IMG_EXTS)
+        files = find(cfg.recursive, IMG_EXTS)
+        if _cancelled(cancel):
+            return cancelled_scan
         if not files:
             return "Немає зображень"
         total = len(files)

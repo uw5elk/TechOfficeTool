@@ -103,8 +103,18 @@ def gui(monkeypatch):
     tk.Tk = FakeTk
     tk.StringVar, tk.BooleanVar, tk.IntVar = StringVar, BooleanVar, IntVar
     tk.BOTH, tk.LEFT = "both", "left"
-    for name in ("Frame", "Label", "Entry", "Button", "Checkbutton", "Combobox", "Spinbox", "Progressbar", "Style"):
+    for name in ("Frame", "Label", "Entry", "Button", "Checkbutton", "Combobox", "Spinbox", "Progressbar"):
         setattr(ttk, name, Widget)
+
+    class RecordingStyle(Widget):
+        maps = {}
+
+        def map(self, style_name, **kw):
+            RecordingStyle.maps[style_name] = kw
+
+    RecordingStyle.maps = {}
+    ttk.Style = RecordingStyle
+    box.style = RecordingStyle
     fd.askdirectory = box.fn("askdirectory", "")
     fd.askopenfilename = box.fn("askopenfilename", "")
     mb.showerror = box.fn("showerror")
@@ -252,32 +262,6 @@ def test_worker_crash_is_reported_with_log_hint(gui, tmp_path, monkeypatch):
     assert not app.running
 
 
-def test_undo_rename_button_flow(gui, tmp_path):
-    mod, box = gui
-    import techoffice_core as c
-
-    for n in ("a.jpg", "b.jpg"):
-        Image.new("RGB", (8, 8)).save(tmp_path / n)
-    files = c._find_files(tmp_path, False, c.IMG_EXTS)
-    done, _ = c._rename_many(c.plan_renames(files, "N{n}", 1, "За іменем"))
-    log = c.write_rename_log(tmp_path, done)
-    app = mod.App()
-    box.answers["askopenfilename"] = str(log)
-    app.undo_rename()
-    assert "Повернуто назв: 2" in messages(box, "showinfo")[-1]
-    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".jpg") == ["a.jpg", "b.jpg"]
-
-
-def test_undo_rename_with_bad_log_shows_error(gui, tmp_path):
-    mod, box = gui
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json")
-    app = mod.App()
-    box.answers["askopenfilename"] = str(bad)
-    app.undo_rename()
-    assert messages(box, "showerror")
-
-
 def test_close_when_idle_destroys_window(gui):
     mod, box = gui
     app = mod.App()
@@ -306,3 +290,44 @@ def test_missing_dependency_shows_message_instead_of_silent_exit(monkeypatch, gu
     with pytest.raises(SystemExit):
         importlib.import_module("DocxImageCompressor")
     assert any("requirements.txt" in c[1][1] for c in box.calls if c[0] == "showerror")
+
+
+def test_hover_and_disabled_states_keep_text_readable(gui):
+    """Регресія: при наведенні фон ставав світлим, а текст лишався білим."""
+    mod, box = gui
+    mod.App()
+    maps = box.style.maps
+    for name in ("TButton", "TCheckbutton", "TEntry", "TCombobox", "TSpinbox"):
+        assert name in maps, name
+    btn = dict(maps["TButton"])
+    states = [st for st, _ in btn["background"]]
+    assert "active" in states and "disabled" in states and "pressed" in states
+    # світлого "#ececec" з теми clam більше немає ні в одному стані
+    for style_name, kw in maps.items():
+        for option, pairs in kw.items():
+            for state, colour in pairs:
+                assert str(colour).lower() not in ("#ececec", "#d9d9d9"), (style_name, option, state)
+    # у вимкненому стані текст кнопки не білий (не зливається зі світлим фоном)
+    fg = dict((tuple([st]) if isinstance(st, str) else st, c) for st, c in btn["foreground"])
+    assert fg[("disabled",)] != "white"
+
+
+def test_drive_root_with_subfolders_asks_before_starting(gui):
+    mod, box = gui
+    root = str(Path("/").resolve())  # на Windows - корінь поточного диска
+    app = mod.App()
+    app.mode_var.set(mod.MODE_RENAME)
+    app.input_var.set(root)
+    app.recursive_var.set(True)
+    box.answers["askyesno"] = False
+    app.start()
+    assert not app.running and app._thread is None
+    assert any("корінь диска" in c[1][1] for c in box.calls if c[0] == "askyesno")
+
+
+def test_progress_message_during_scan_does_not_break_progressbar(gui):
+    mod, box = gui
+    app = mod.App()
+    app._upd(0, 0, "Пошук файлів… переглянуто 400")
+    assert app.status.opts["text"] == "Пошук файлів…"
+    assert "400" in app.detail.opts["text"]

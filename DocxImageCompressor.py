@@ -55,6 +55,38 @@ class App(tk.Tk):
         style.configure("TCombobox", fieldbackground="white", foreground="black", background="white", arrowcolor="black")
         style.map("TCombobox", fieldbackground=[("readonly", "white")], foreground=[("readonly", "black")], selectbackground=[("readonly", "white")], selectforeground=[("readonly", "black")])
         style.configure("TSpinbox", fieldbackground="white", foreground="black", arrowcolor="black", background="white")
+        # Тема "clam" за замовчуванням підсвічує елементи світло-сірим при наведенні й
+        # у вимкненому стані, а текст лишається білим - тому він зливався з фоном.
+        BG, BTN, BTN_HOVER, BTN_PRESSED, BTN_OFF, TXT_OFF = "#2d2d2d", "#555555", "#6e6e6e", "#444444", "#3a3a3a", "#8a8a8a"
+        style.map(
+            "TButton",
+            background=[("disabled", BTN_OFF), ("pressed", BTN_PRESSED), ("active", BTN_HOVER)],
+            foreground=[("disabled", TXT_OFF), ("!disabled", "white")],
+            bordercolor=[("disabled", BTN_OFF)],
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", BG), ("!active", BG)],
+            foreground=[("disabled", TXT_OFF), ("!disabled", "white")],
+            indicatorbackground=[("disabled", BTN_OFF), ("!disabled", "white")],
+            indicatorforeground=[("disabled", TXT_OFF), ("!disabled", "black")],
+        )
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", "#4a4a4a"), ("!disabled", "white")],
+            foreground=[("disabled", "#bbbbbb"), ("!disabled", "black")],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("disabled", "#4a4a4a"), ("readonly", "white")],
+            foreground=[("disabled", "#bbbbbb"), ("readonly", "black")],
+            background=[("active", "#dddddd"), ("!active", "white")],
+        )
+        style.map(
+            "TSpinbox",
+            fieldbackground=[("disabled", "#4a4a4a"), ("!disabled", "white")],
+            foreground=[("disabled", "#bbbbbb"), ("!disabled", "black")],
+        )
 
         self.mode_var = tk.StringVar(value=MODES[0])  # першим іде конвертація .doc -> .docx
         self.input_var = tk.StringVar()
@@ -135,7 +167,6 @@ class App(tk.Tk):
         ttk.Label(row3, text="Сортування:").pack(side=tk.LEFT)
         ttk.Combobox(row3, textvariable=self.sort_var, values=list(SORT_OPTIONS), state="readonly", width=25).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(self.ren_opts, text="Тільки попередній перегляд", variable=self.dry_run_var).pack(anchor="w", pady=4)
-        ttk.Button(self.ren_opts, text="Відмінити перейменування…", command=self.undo_rename).pack(anchor="w", pady=4)
 
         self.conv_opts = ttk.Frame(frm)
         self.conv_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
@@ -239,6 +270,13 @@ class App(tk.Tk):
             if bad:
                 messagebox.showerror("Помилка", bad)
                 return
+        # корінь диска + підпапки = перегляд усього диска (довго, зачіпає й системні папки)
+        if (mode == MODE_DOCX or self.recursive_var.get()) and Path(inp).parent == Path(inp):
+            if not messagebox.askyesno(
+                "Підтвердження",
+                "Обрано корінь диска (%s) разом з підпапками.\nПошук може тривати дуже довго.\nПродовжити?" % inp,
+            ):
+                return
         # попередження перед незворотними діями
         if mode in (MODE_DOCX, MODE_IMAGES) and out == inp:
             if not messagebox.askyesno("Підтвердження", "Файли буде замінено на місці (оригінали не збережуться).\nПродовжити?"):
@@ -308,6 +346,10 @@ class App(tk.Tk):
             self.after(100, self._poll_queue)
 
     def _upd(self, i, total, name):
+        if total == 0:  # етап пошуку файлів: кількість ще невідома
+            self.status.configure(text="Пошук файлів…")
+            self.detail.configure(text=name)
+            return
         self.progress.configure(maximum=total)
         self.progress["value"] = i
         self.status.configure(text="Обробка %d з %d" % (i, total))
@@ -321,26 +363,6 @@ class App(tk.Tk):
         self.detail.configure(text="")
         if core.LOG_PATH and ("Помил" in msg or "помил" in msg):
             msg += "\n\nЖурнал: %s" % core.LOG_PATH
-        messagebox.showinfo("Результат", msg)
-
-    # ------------------------------------------------------ відміна rename --
-    def undo_rename(self):
-        path = filedialog.askopenfilename(
-            title="Журнал перейменування",
-            initialdir=self.input_var.get() or None,
-            filetypes=[("Журнал перейменування", "*.json"), ("Усі файли", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            restored, skipped, errors = core.undo_rename(Path(path))
-        except Exception as e:
-            core.LOG.exception("Не вдалося відмінити перейменування")
-            messagebox.showerror("Помилка", "Не вдалося прочитати журнал:\n%s" % e)
-            return
-        msg = "Повернуто назв: %d\nПропущено: %d" % (restored, skipped)
-        if errors:
-            msg += "\nПомилок: %d\n\n" % len(errors) + "\n".join(errors[:3])
         messagebox.showinfo("Результат", msg)
 
     # ------------------------------------------------------------- вихід --
