@@ -262,32 +262,6 @@ def test_worker_crash_is_reported_with_log_hint(gui, tmp_path, monkeypatch):
     assert not app.running
 
 
-def test_undo_rename_button_flow(gui, tmp_path):
-    mod, box = gui
-    import techoffice_core as c
-
-    for n in ("a.jpg", "b.jpg"):
-        Image.new("RGB", (8, 8)).save(tmp_path / n)
-    files = c._find_files(tmp_path, False, c.IMG_EXTS)
-    done, _ = c._rename_many(c.plan_renames(files, "N{n}", 1, "За іменем"))
-    log = c.write_rename_log(tmp_path, done)
-    app = mod.App()
-    box.answers["askopenfilename"] = str(log)
-    app.undo_rename()
-    assert "Повернуто назв: 2" in messages(box, "showinfo")[-1]
-    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".jpg") == ["a.jpg", "b.jpg"]
-
-
-def test_undo_rename_with_bad_log_shows_error(gui, tmp_path):
-    mod, box = gui
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json")
-    app = mod.App()
-    box.answers["askopenfilename"] = str(bad)
-    app.undo_rename()
-    assert messages(box, "showerror")
-
-
 def test_close_when_idle_destroys_window(gui):
     mod, box = gui
     app = mod.App()

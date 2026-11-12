@@ -167,7 +167,6 @@ class App(tk.Tk):
         ttk.Label(row3, text="Сортування:").pack(side=tk.LEFT)
         ttk.Combobox(row3, textvariable=self.sort_var, values=list(SORT_OPTIONS), state="readonly", width=25).pack(side=tk.LEFT, padx=6)
         ttk.Checkbutton(self.ren_opts, text="Тільки попередній перегляд", variable=self.dry_run_var).pack(anchor="w", pady=4)
-        ttk.Button(self.ren_opts, text="Відмінити перейменування…", command=self.undo_rename).pack(anchor="w", pady=4)
 
         self.conv_opts = ttk.Frame(frm)
         self.conv_opts.grid(row=9, column=0, columnspan=3, sticky="w", **pad)
@@ -364,26 +363,6 @@ class App(tk.Tk):
         self.detail.configure(text="")
         if core.LOG_PATH and ("Помил" in msg or "помил" in msg):
             msg += "\n\nЖурнал: %s" % core.LOG_PATH
-        messagebox.showinfo("Результат", msg)
-
-    # ------------------------------------------------------ відміна rename --
-    def undo_rename(self):
-        path = filedialog.askopenfilename(
-            title="Журнал перейменування",
-            initialdir=self.input_var.get() or None,
-            filetypes=[("Журнал перейменування", "*.json"), ("Усі файли", "*.*")],
-        )
-        if not path:
-            return
-        try:
-            restored, skipped, errors = core.undo_rename(Path(path))
-        except Exception as e:
-            core.LOG.exception("Не вдалося відмінити перейменування")
-            messagebox.showerror("Помилка", "Не вдалося прочитати журнал:\n%s" % e)
-            return
-        msg = "Повернуто назв: %d\nПропущено: %d" % (restored, skipped)
-        if errors:
-            msg += "\nПомилок: %d\n\n" % len(errors) + "\n".join(errors[:3])
         messagebox.showinfo("Результат", msg)
 
     # ------------------------------------------------------------- вихід --

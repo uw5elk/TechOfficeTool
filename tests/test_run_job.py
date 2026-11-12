@@ -102,12 +102,8 @@ def test_rename_dry_run_changes_nothing_then_real(tmp_path):
     assert "a.jpg → IMG_0001.jpg" in msg
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.jpg", "b.jpg"]
     msg = c.run_job(cfg(c.MODE_RENAME, tmp_path, dry_run=False))
-    assert "Перейменовано: 2" in msg and "Журнал для відміни" in msg
-    logs = list(tmp_path.glob(".rename_log_*.json"))
-    assert len(logs) == 1
-    restored, skipped, errs = c.undo_rename(logs[0])
-    assert restored == 2
-    assert sorted(p.name for p in tmp_path.iterdir() if p.suffix == ".jpg") == ["a.jpg", "b.jpg"]
+    assert "Перейменовано: 2" in msg and "Журнал" not in msg
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["IMG_0001.jpg", "IMG_0002.jpg"]  # і жодних службових файлів
 
 
 def test_rename_invalid_template_is_reported_not_crashed(tmp_path):

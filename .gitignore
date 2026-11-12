@@ -3,6 +3,5 @@ __pycache__/
 build/
 dist/
 *.spec
-.rename_log_*.json
 *.bak
 .pytest_cache/

@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import io
-import json
 import logging
 import logging.handlers
 import os
@@ -834,38 +833,6 @@ def _rename_many(pairs, cancel=None, progress=None):
     return done, errors
 
 
-def write_rename_log(folder: Path, done) -> Optional[Path]:
-    if not done:
-        return None
-    try:
-        path = folder / f".rename_log_{datetime.now():%Y%m%d_%H%M%S}.json"
-        payload = {
-            "version": 1,
-            "created": datetime.now().isoformat(timespec="seconds"),
-            "renames": [{"old": str(s), "new": str(d)} for s, d in done],
-        }
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
-        return path
-    except Exception:
-        LOG.exception("Не вдалося записати журнал перейменування")
-        return None
-
-
-def undo_rename(log_path: Path):
-    """Повертає старі імена за журналом. Результат: (відновлено, пропущено, помилки)."""
-    data = json.loads(Path(log_path).read_text(encoding="utf-8"))
-    pairs = [(Path(e["new"]), Path(e["old"])) for e in data.get("renames", [])]
-    src_keys = {_norm(s) for s, _ in pairs}
-    todo, skipped = [], 0
-    for s, d in pairs:
-        if not s.exists() or (d.exists() and _norm(d) not in src_keys):
-            skipped += 1
-        else:
-            todo.append((s, d))
-    done, errors = _rename_many(todo)
-    return len(done), skipped, errors
-
-
 # --------------------------------------------------------------------------- #
 # Видалення EXIF
 # --------------------------------------------------------------------------- #
@@ -1251,12 +1218,9 @@ def run_job(
                 lines.append(f"... ще {len(planned) - 50}")
             return "\n".join(lines)
         done_pairs, errors = _rename_many(planned, cancel, progress)
-        log_path = write_rename_log(src_root, done_pairs)
         msg = f"Перейменовано: {len(done_pairs)}\nПомилок: {len(errors)}"
         if errors:
             msg += "\n\nДеталі помилок:\n" + "\n".join(errors[:3])
-        if log_path:
-            msg += f"\n\nЖурнал для відміни: {log_path.name}"
         return msg
 
     if cfg.mode == MODE_EXIF:
